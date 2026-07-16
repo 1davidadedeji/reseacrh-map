@@ -1,49 +1,22 @@
+// These interfaces mirror the Supabase table schemas exactly.
+
 export interface Building {
-  id: string;
+  id: string;           // TEXT PK — matches building_id in buildings.geojson
   name: string;
   code: string;
-  longitude: number;
-  latitude: number;
-  floors: number;
-  year_built: number | null;
+  lat: number;
+  lng: number;
   description: string | null;
   image_url: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Department {
-  id: string;
-  building_id: string;
-  name: string;
-  acronym: string;
-  floor: number | null;
-  phone: string | null;
-  email: string | null;
-  website_url: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Researcher {
-  id: string;
-  department_id: string;
-  first_name: string;
-  last_name: string;
-  title: string;
-  email: string;
-  phone: string | null;
-  bio: string | null;
-  avatar_url: string | null;
-  specializations: string[];
+  floors: number | null;
+  year_built: number | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface ResearchProject {
   id: string;
-  department_id: string;
-  lead_researcher_id: string;
+  building_id: string;
   title: string;
   abstract: string | null;
   status: "active" | "completed" | "pending" | "on_hold";
@@ -57,17 +30,51 @@ export interface ResearchProject {
   updated_at: string;
 }
 
-// Join types for convenient data fetching
-export interface BuildingWithDepartments extends Building {
-  departments: Department[];
+export interface Researcher {
+  id: string;
+  building_id: string;
+  name: string;
+  title: string | null;
+  department: string | null;
+  email: string | null;
+  avatar_url: string | null;
+  specializations: string[];
+  created_at: string;
+  updated_at: string;
 }
 
-export interface DepartmentWithResearchers extends Department {
-  researchers: Researcher[];
+export interface ProjectResearcher {
+  project_id: string;
+  researcher_id: string;
+  role: string | null;
 }
 
-export interface ResearchProjectWithRelations extends ResearchProject {
-  department: Department;
-  lead_researcher: Researcher;
-  collaborators: Researcher[];
-}
+// Supabase typed-client schema — lives here so supabase-server.ts can import it
+// without pulling in supabase.ts (which imports createClient, causing a Turbopack
+// module-concatenation name collision).
+export type Database = {
+  public: {
+    Tables: {
+      buildings: {
+        Row: Building;
+        Insert: Omit<Building, "created_at" | "updated_at">;
+        Update: Partial<Omit<Building, "id" | "created_at" | "updated_at">>;
+      };
+      research_projects: {
+        Row: ResearchProject;
+        Insert: Omit<ResearchProject, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<ResearchProject, "id" | "created_at" | "updated_at">>;
+      };
+      researchers: {
+        Row: Researcher;
+        Insert: Omit<Researcher, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<Researcher, "id" | "created_at" | "updated_at">>;
+      };
+      project_researchers: {
+        Row: ProjectResearcher;
+        Insert: ProjectResearcher;
+        Update: Partial<ProjectResearcher>;
+      };
+    };
+  };
+};

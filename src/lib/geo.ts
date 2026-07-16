@@ -1,31 +1,25 @@
 import { bbox, center, distance, featureCollection, point } from "@turf/turf";
-import type { CampusBuilding } from "@/lib/campus-data";
+import type { Building } from "@/types";
 
-export function getCampusBounds(buildings: CampusBuilding[]) {
-  const points = featureCollection(
-    buildings.map((b) => point([b.longitude, b.latitude]))
-  );
+export function getCampusBounds(buildings: Building[]) {
+  const points = featureCollection(buildings.map((b) => point([b.lng, b.lat])));
   const [west, south, east, north] = bbox(points);
   return { west, south, east, north };
 }
 
-export function getCampusCenter(buildings: CampusBuilding[]) {
-  const points = featureCollection(
-    buildings.map((b) => point([b.longitude, b.latitude]))
-  );
-  const [longitude, latitude] = center(points).geometry.coordinates;
-  return { longitude, latitude };
+export function getCampusCenter(buildings: Building[]) {
+  const points = featureCollection(buildings.map((b) => point([b.lng, b.lat])));
+  const [lng, lat] = center(points).geometry.coordinates;
+  return { lng, lat };
 }
 
 export function getDistanceKm(
-  from: { longitude: number; latitude: number },
-  to: { longitude: number; latitude: number }
+  from: { lng: number; lat: number },
+  to: { lng: number; lat: number }
 ) {
-  return distance(
-    point([from.longitude, from.latitude]),
-    point([to.longitude, to.latitude]),
-    { units: "kilometers" }
-  );
+  return distance(point([from.lng, from.lat]), point([to.lng, to.lat]), {
+    units: "kilometers",
+  });
 }
 
 export function formatDistanceKm(km: number) {

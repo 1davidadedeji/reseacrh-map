@@ -22,20 +22,128 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
-/* Mapbox control styling */
-.mapboxgl-ctrl-group {
+/* MapLibre control styling */
+.maplibregl-ctrl-group {
   border-radius: 12px !important;
   overflow: hidden;
   box-shadow: 0 4px 12px rgb(0 0 0 / 8%) !important;
   border: 1px solid rgb(0 0 0 / 5%) !important;
 }
 
-.mapboxgl-ctrl-group button {
+.maplibregl-ctrl-group button {
   width: 36px !important;
   height: 36px !important;
 }
 
-.mapboxgl-ctrl-bottom-right {
+.maplibregl-ctrl-bottom-right {
   bottom: 24px !important;
   right: 24px !important;
+}
+
+/* Building pin hover card (maplibregl.Popup, className building-pin-popup) */
+.building-pin-popup .maplibregl-popup-content {
+  padding: 0;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgb(0 0 0 / 18%), 0 1px 4px rgb(0 0 0 / 8%);
+  overflow: hidden;
+  pointer-events: none;
+}
+.building-pin-popup {
+  pointer-events: none; /* hover card must not steal the pin's mouse events */
+}
+
+/* Map must fill its flex parent */
+.campus-map-container,
+.campus-map-container .maplibregl-map,
+.campus-map-container .maplibregl-canvas-container,
+.campus-map-container canvas.maplibregl-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.building-map-pin {
+  display: block;
+  width: 36px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 30%));
+  transition: transform 0.15s ease;
+}
+
+.building-map-pin:hover {
+  transform: scale(1.08);
+  z-index: 2;
+}
+
+.building-map-pin--selected {
+  animation: building-pin-pulse 1.4s ease-in-out infinite;
+  z-index: 3;
+}
+
+.building-map-pin__shape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: #eeb310;
+  border: 2px solid #1a1a1a;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+}
+
+.building-map-pin__icon {
+  width: 14px;
+  height: 14px;
+  color: #1a1a1a;
+  transform: rotate(45deg);
+}
+
+/* Baylor-style floating map controls */
+.map-control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: #fff;
+  border: 1px solid rgb(0 0 0 / 8%);
+  border-radius: 4px;
+  color: #374151;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.map-control-btn:hover {
+  color: #eeb310;
+  border-color: rgb(238 179 16 / 40%);
+}
+
+.map-control-group {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 4px;
+  border: 1px solid rgb(0 0 0 / 8%);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
+}
+
+.map-control-btn--grouped {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+@keyframes building-pin-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
 }
