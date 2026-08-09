@@ -30,6 +30,12 @@ export interface ResearchProject {
   updated_at: string;
 }
 
+export interface Publication {
+  title: string;
+  year?: number;
+  url?: string;
+}
+
 export interface Researcher {
   id: string;
   building_id: string;
@@ -39,6 +45,12 @@ export interface Researcher {
   email: string | null;
   avatar_url: string | null;
   specializations: string[];
+  bio: string | null;
+  photo_url: string | null;
+  awards: string[];
+  publications: Publication[];
+  website_url: string | null;
+  google_scholar_url: string | null;
   created_at: string;
   updated_at: string;
 }

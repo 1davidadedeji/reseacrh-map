@@ -73,8 +73,8 @@ export function getLocalAssistantReply(userMessage: string): string {
   }
 
   if (/stem academy|stem/.test(msg)) {
-    const b = CAMPUS_BUILDINGS.find((x) => x.id === "stem-academy");
-    if (!b) return "STEM Academy is not in the current dataset.";
+    const b = CAMPUS_BUILDINGS.find((x) => x.id === "stem-building");
+    if (!b) return "STEM Building is not in the current dataset.";
     return `**${b.name}** (${b.code}) is a **${b.category}** building.\n\n${b.description}\n\nGrants: ${b.grants.map((g) => `${g.title} (${g.amount}, ${g.status})`).join("; ")}\n\nResearchers: ${b.researchers.map((r) => `${r.name} — ${r.specialty}`).join("; ")}.`;
   }
 

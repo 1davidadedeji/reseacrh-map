@@ -8,10 +8,11 @@ import maplibregl, {
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   bbox, bboxPolygon, booleanClockwise, booleanIntersects, buffer,
-  concave, convex, explode, featureCollection, point, polygonSmooth, union,
+  concave, convex, distance, explode, featureCollection, point, polygonSmooth, union,
 } from "@turf/turf";
 import type { Building } from "@/types";
 import type { GeoJsonBuildingMeta } from "@/types/building-selection";
+import type { DirectionsResult } from "@/lib/directions";
 
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY ?? "";
 
@@ -24,6 +25,8 @@ const SATELLITE_SOURCE = "satellite";
 const MASK_SOURCE      = "satellite-mask";
 const ZONES_SOURCE     = "satellite-zones";
 const PINS_SOURCE      = "building-pins";
+const ROUTE_SOURCE        = "route-line";
+const ROUTE_ENDPOINTS_SOURCE = "route-endpoints";
 
 const LAYER_SATELLITE     = "satellite-layer";
 const LAYER_MASK          = "satellite-mask-layer";
@@ -31,6 +34,14 @@ const LAYER_ZONE_OUTLINE  = "satellite-zones-outline";
 const LAYER_LABELS        = "buildings-labels";
 const LAYER_PINS          = "pins-layer";
 const LAYER_PINS_SELECTED = "pins-layer-selected";
+const LAYER_ROUTE_CASING  = "route-casing-layer";
+const LAYER_ROUTE_LINE    = "route-line-layer";
+const LAYER_ROUTE_ENDPOINTS = "route-endpoints-layer";
+
+// Route color intentionally distinct from the gold building pins — blue is
+// the universal "this is a navigation path" convention (Google/Apple/Baylor).
+const ROUTE_BLUE        = "#2563eb";
+const ROUTE_BLUE_CASING = "#ffffff";
 
 const PIN_IMAGE          = "uapb-pin";
 const PIN_IMAGE_SELECTED = "uapb-pin-selected";
@@ -43,7 +54,7 @@ const PIN_IMAGE_SELECTED = "uapb-pin-selected";
 const MASK_OPACITY = 0.92;
 
 const INITIAL_CENTER: [number, number] = [-92.02184, 34.24382];
-const INITIAL_ZOOM        = 15;
+const INITIAL_ZOOM        = 16;
 const BUILDING_FOCUS_ZOOM = 18;
 const LABEL_MIN_ZOOM      = 15.5;
 
@@ -53,7 +64,13 @@ const CAMPUS_BOUNDS_FALLBACK: [[number, number], [number, number]] = [
   [-92.0250, 34.2400],
   [-92.0170, 34.2530],
 ];
+const MAIN_CAMPUS_CENTER: [number, number] = [-92.02184, 34.24382];
+const MAIN_CAMPUS_RADIUS_KM = 1.2;
+const CAMPUS_MIN_ZOOM = 15.8;
+const CAMPUS_MAX_ZOOM = 18;
+
 let campusFitBounds = CAMPUS_BOUNDS_FALLBACK;
+let mainCampusFitBounds = CAMPUS_BOUNDS_FALLBACK;
 
 const WORLD_RING: [number, number][] = [
   [-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85],
@@ -72,13 +89,13 @@ const OFF_CAMPUS_SITES = [
     lng: -92.0242, lat: 34.2525, radius: 150 },
 ];
 
-const LEFT_PANEL_W    = 288;
+const LEFT_PANEL_W    = 400;
 const LEFT_COLLAPSED_W = 48;
 const RIGHT_SIDEBAR_W = 320;
 const MAP_UI_BOTTOM   = 100;
 
 const PIN_GOLD          = "#EEB310";
-const PIN_GOLD_SELECTED = "#C8960A";
+const PIN_GOLD_SELECTED = "#1E40AF"; // navy blue — contrasts with gold default pins
 
 // ── Pin SVG geometry (28 × 34) ─────────────────────────────────────────────────
 // Circle head: r=11 centered at (14,13).  Tip at (14,33) → anchor: "bottom" puts
@@ -89,43 +106,80 @@ const PIN_PATH = "M14 33C8 24 3 20 3 13A11 11 0 1 1 25 13C25 20 20 24 14 33Z";
 // Columned-building icon inside circle (pediment + 3 columns + base)
 const ICON_PATH = "M7 13L14 7L21 13M7 13h14M9 13v7M14 13v7M19 13v7M7 20h14";
 
+export interface UserLocation {
+  lng: number;
+  lat: number;
+}
+
 interface CampusMapProps {
   buildings: Building[];
   selectedId: string | null;
   onSelectBuilding: (id: string, meta?: GeoJsonBuildingMeta) => void;
   leftPanelCollapsed?: boolean;
   rightSidebarOpen?: boolean;
+  route?: DirectionsResult | null;
+  userLocation?: UserLocation | null;
+  onUserLocationChange?: (loc: UserLocation | null) => void;
+  /** New array reference on every click — pans to a turn-by-turn step. */
+  focusPoint?: [number, number] | null;
+  /** Increment to force a full campus overview refit (logo / home reset). */
+  viewResetNonce?: number;
+  onCampusHomeClick?: () => void;
 }
 
-// ── Orientation ────────────────────────────────────────────────────────────────
+const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-function getOrientationBearing(): number {
-  if (typeof window === "undefined") return 0;
-  // Campus rectangle is portrait; rotate -90° on landscape screens so it
-  // fills the horizontal viewport instead of leaving dead space.
-  return window.innerWidth > window.innerHeight ? -90 : 0;
+function routeLineFeatureCollection(route: DirectionsResult | null): GeoJSON.FeatureCollection {
+  if (!route) return EMPTY_FEATURE_COLLECTION;
+  return {
+    type: "FeatureCollection",
+    features: [{ type: "Feature", geometry: route.geometry, properties: {} }],
+  };
+}
+
+function routeEndpointsFeatureCollection(route: DirectionsResult | null): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  if (!route) return { type: "FeatureCollection", features: [] };
+  const coords = route.geometry.coordinates;
+  const start = coords[0];
+  const end = coords[coords.length - 1];
+  if (!start || !end) return { type: "FeatureCollection", features: [] };
+  return {
+    type: "FeatureCollection",
+    features: [
+      { type: "Feature", geometry: { type: "Point", coordinates: start as [number, number] }, properties: { label: "A" } },
+      { type: "Feature", geometry: { type: "Point", coordinates: end as [number, number] }, properties: { label: "B" } },
+    ],
+  };
 }
 
 // ── Layout / camera helpers ────────────────────────────────────────────────────
 
 function buildMapPadding(lc: boolean, rs: boolean): PaddingOptions {
   return {
-    left:   (lc ? LEFT_COLLAPSED_W : LEFT_PANEL_W) + 24,
-    top:    20,
-    right:  (rs ? RIGHT_SIDEBAR_W : 0) + 56,
-    bottom: MAP_UI_BOTTOM,
+    left:   (lc ? LEFT_COLLAPSED_W : LEFT_PANEL_W) + 16,
+    top:    16,
+    right:  (rs ? RIGHT_SIDEBAR_W : 0) + 48,
+    bottom: 48,
   };
 }
 
 function fitCampusView(map: maplibregl.Map, padding: PaddingOptions, animate = true) {
   try {
-    map.fitBounds(campusFitBounds, {
+    map.fitBounds(mainCampusFitBounds, {
       padding,
       pitch:   0,
-      bearing: getOrientationBearing(),
-      duration: animate ? 700 : 0,
-      maxZoom:  17.5,
+      bearing: 0,
+      duration: animate ? 600 : 0,
+      maxZoom:  CAMPUS_MAX_ZOOM,
     });
+    const enforceMinZoom = () => {
+      if (!isMapReady(map)) return;
+      if (map.getZoom() < CAMPUS_MIN_ZOOM) {
+        map.easeTo({ zoom: CAMPUS_MIN_ZOOM, duration: animate ? 300 : 0 });
+      }
+    };
+    if (animate) map.once("moveend", enforceMinZoom);
+    else enforceMinZoom();
   } catch { /* ignore during teardown */ }
 }
 
@@ -137,12 +191,20 @@ function isMapReady(map: maplibregl.Map | null): map is maplibregl.Map {
 
 // ── GeoJSON helpers ────────────────────────────────────────────────────────────
 
+/** Generic OSM placeholders — not real campus buildings in our dataset. */
+function isValidBuildingId(id: string): boolean {
+  const normalized = id.trim().toLowerCase();
+  return normalized.length > 0 && normalized !== "building";
+}
+
 function buildingMetaFromFeature(f: GeoJSON.Feature): GeoJsonBuildingMeta | null {
   const p = f.properties;
   if (!p) return null;
   const id = p.building_id as string | undefined;
-  if (!id) return null;
-  return { id, name: String(p.name ?? id), code: String(p.code ?? "") };
+  if (!id || !isValidBuildingId(id)) return null;
+  const name = String(p.name ?? id).trim();
+  if (name.toLowerCase() === "building" && id.toLowerCase() === "building") return null;
+  return { id, name, code: String(p.code ?? "") };
 }
 
 function ringCentroid(ring: number[][]): [number, number] | null {
@@ -273,6 +335,26 @@ interface MaskZones {
   holeRings: GeoJSON.Position[][];
 }
 
+function filterMainCampusFeatures(geojson: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
+  const center = point(MAIN_CAMPUS_CENTER);
+  return {
+    type: "FeatureCollection",
+    features: geojson.features.filter((f) => {
+      const c = centroidFromFeature(f);
+      if (!c) return false;
+      return distance(center, point(c), { units: "kilometers" }) <= MAIN_CAMPUS_RADIUS_KM;
+    }),
+  };
+}
+
+function updateMainCampusFitBounds(geojson: GeoJSON.FeatureCollection) {
+  const main = filterMainCampusFeatures(geojson);
+  if (main.features.length === 0) return;
+  const zone = computeCampusZone(main);
+  const [w, s, e, n] = bbox(zone);
+  mainCampusFitBounds = [[w, s], [e, n]];
+}
+
 let cachedMaskZones: MaskZones | null = null;
 
 function getMaskZones(geojson: GeoJSON.FeatureCollection): MaskZones {
@@ -280,6 +362,7 @@ function getMaskZones(geojson: GeoJSON.FeatureCollection): MaskZones {
   const campusZone = computeCampusZone(geojson);
   const [w, s, e, n] = bbox(campusZone);
   campusFitBounds = [[w, s], [e, n]];
+  updateMainCampusFitBounds(geojson);
   const zones = dissolveOverlaps([campusZone, ...computeOffCampusZones()]);
   cachedMaskZones = { zones, holeRings: zoneHoleRings(zones) };
   return cachedMaskZones;
@@ -328,6 +411,7 @@ function addBuildingSource(map: maplibregl.Map, geojson: GeoJSON.FeatureCollecti
   map.addSource(SOURCE_ID, { type: "geojson", data: geojson, promoteId: "building_id" });
   map.addLayer({
     id: LAYER_LABELS, type: "symbol", source: SOURCE_ID, minzoom: LABEL_MIN_ZOOM,
+    filter: ["all", ["has", "building_id"], ["!=", ["get", "building_id"], "building"]],
     layout: {
       "text-field":            ["get", "name"],
       // Size interpolates 10px → 14px as you zoom from 15.5 → 18
@@ -358,7 +442,7 @@ function focusBuilding(
       center:  coord,
       zoom:    BUILDING_FOCUS_ZOOM,
       pitch:   0,
-      bearing: map.getBearing(), // preserve current orientation
+      bearing: 0,
       padding,
       duration: animate ? 900 : 0,
     });
@@ -392,11 +476,13 @@ function renderTooltipBody(meta: GeoJsonBuildingMeta, building: Building | null)
   const detailLine = details.length
     ? `<p style="margin:3px 0 0;font-size:10px;color:#aaa;">${details.join(" · ")}</p>` : "";
 
-  return `${header}
+  return `<div data-building-hover-card role="button" tabindex="0" style="padding:12px;width:210px;font-family:system-ui,-apple-system,sans-serif;cursor:pointer;">
+    ${header}
     <p style="margin:0;font-weight:700;font-size:13px;color:#111;line-height:1.3;">${esc(meta.name)}</p>
     ${meta.code ? `<p style="margin:2px 0 0;font-size:10px;color:#999;font-family:monospace;letter-spacing:.04em;">${esc(meta.code)}</p>` : ""}
     ${desc}${detailLine}
-    <p style="margin:8px 0 0;font-size:10px;color:${PIN_GOLD};font-weight:600;">View research →</p>`;
+    <p style="margin:8px 0 0;font-size:10px;color:${PIN_GOLD};font-weight:600;">View research →</p>
+  </div>`;
 }
 
 // ── Native pin symbol layers ───────────────────────────────────────────────────
@@ -426,10 +512,12 @@ function buildPinFeatureCollection(
   geojson: GeoJSON.FeatureCollection,
 ): GeoJSON.FeatureCollection<GeoJSON.Point> {
   const features: GeoJSON.Feature<GeoJSON.Point>[] = [];
+  const seen = new Set<string>();
   for (const f of geojson.features) {
     const meta  = buildingMetaFromFeature(f);
     const coord = meta ? centroidFromFeature(f) : null;
-    if (!meta || !coord) continue;
+    if (!meta || !coord || seen.has(meta.id)) continue;
+    seen.add(meta.id);
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: coord },
@@ -446,6 +534,8 @@ function buildPinFeatureCollection(
 
 const PIN_ICON_SIZE: ExpressionSpecification =
   ["interpolate", ["linear"], ["zoom"], 13, 0.5, 15, 0.8, 16.5, 1.0];
+const PIN_ICON_SIZE_SELECTED: ExpressionSpecification =
+  ["interpolate", ["linear"], ["zoom"], 13, 0.7, 15, 1.05, 16.5, 1.35];
 // Lower sort key wins collisions; buildings with a `priority` property beat
 // the rest (none in the data yet — activates automatically when added)
 const PIN_SORT_KEY: ExpressionSpecification = ["coalesce", ["get", "priority"], 999];
@@ -466,16 +556,20 @@ function addPinLayers(map: maplibregl.Map, geojson: GeoJSON.FeatureCollection) {
     },
   });
 
-  // Selected building: darker 1.15x pin on its own always-visible layer
+  // Selected building: larger pin — always visible above others
   map.addLayer({
     id: LAYER_PINS_SELECTED, type: "symbol", source: PINS_SOURCE,
     filter: ["==", ["get", "building_id"], ""],
     layout: {
       "icon-image":            PIN_IMAGE_SELECTED,
       "icon-anchor":           "bottom",
-      "icon-size":             PIN_ICON_SIZE,
+      "icon-size":             PIN_ICON_SIZE_SELECTED,
       "icon-allow-overlap":    true,
       "icon-ignore-placement": true,
+    },
+    paint: {
+      "icon-translate":        [0, -8],
+      "icon-translate-anchor": "viewport",
     },
   });
 }
@@ -490,6 +584,84 @@ function syncPinSelection(map: maplibregl.Map, selectedId: string | null) {
   } catch { /* teardown */ }
 }
 
+// Route line + A/B endpoint markers, drawn above the satellite mask and below
+// the building pins so pins stay clickable over the route.
+function addRouteLayers(map: maplibregl.Map) {
+  if (map.getSource(ROUTE_SOURCE)) return;
+
+  map.addSource(ROUTE_SOURCE, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
+  map.addLayer({
+    id: LAYER_ROUTE_CASING, type: "line", source: ROUTE_SOURCE,
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": ROUTE_BLUE_CASING, "line-width": 7, "line-opacity": 0.9 },
+  }, LAYER_LABELS);
+  map.addLayer({
+    id: LAYER_ROUTE_LINE, type: "line", source: ROUTE_SOURCE,
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": ROUTE_BLUE, "line-width": 4 },
+  }, LAYER_LABELS);
+
+  map.addSource(ROUTE_ENDPOINTS_SOURCE, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({
+    id: LAYER_ROUTE_ENDPOINTS, type: "circle", source: ROUTE_ENDPOINTS_SOURCE,
+    paint: {
+      "circle-radius": 9,
+      "circle-color": ["match", ["get", "label"], "A", "#16a34a", "B", "#dc2626", ROUTE_BLUE],
+      "circle-stroke-color": "#ffffff",
+      "circle-stroke-width": 2,
+    },
+  });
+}
+
+function syncRoute(map: maplibregl.Map, route: DirectionsResult | null) {
+  const lineSource = map.getSource(ROUTE_SOURCE) as maplibregl.GeoJSONSource | undefined;
+  const endpointsSource = map.getSource(ROUTE_ENDPOINTS_SOURCE) as maplibregl.GeoJSONSource | undefined;
+  lineSource?.setData(routeLineFeatureCollection(route));
+  endpointsSource?.setData(routeEndpointsFeatureCollection(route));
+}
+
+function fitRouteBounds(map: maplibregl.Map, route: DirectionsResult, padding: PaddingOptions) {
+  try {
+    const [w, s, e, n] = bbox({ type: "Feature", geometry: route.geometry, properties: {} });
+    map.fitBounds([[w, s], [e, n]], {
+      padding,
+      pitch:   0,
+      bearing: 0,
+      duration: 600,
+      maxZoom:  18,
+    });
+  } catch { /* teardown */ }
+}
+
+// ── "You are here" marker ──────────────────────────────────────────────────────
+
+function makeUserLocationEl(): HTMLDivElement {
+  const el = document.createElement("div");
+  el.style.width = "16px";
+  el.style.height = "16px";
+  el.style.borderRadius = "50%";
+  el.style.background = ROUTE_BLUE;
+  el.style.border = "3px solid #ffffff";
+  el.style.boxShadow = "0 0 0 2px rgba(37,99,235,0.35), 0 2px 6px rgba(0,0,0,0.35)";
+  return el;
+}
+
+function syncUserLocationMarker(
+  map: maplibregl.Map,
+  markerRef: { current: maplibregl.Marker | null },
+  location: UserLocation | null,
+) {
+  if (!location) {
+    markerRef.current?.remove();
+    markerRef.current = null;
+    return;
+  }
+  if (!markerRef.current) {
+    markerRef.current = new maplibregl.Marker({ element: makeUserLocationEl() });
+  }
+  markerRef.current.setLngLat([location.lng, location.lat]).addTo(map);
+}
+
 function attachPinInteractions(
   map:         maplibregl.Map,
   onSelect:    (id: string, meta: GeoJsonBuildingMeta) => void,
@@ -497,9 +669,42 @@ function attachPinInteractions(
 ) {
   const popup = new maplibregl.Popup({
     closeButton: false, closeOnClick: false,
-    anchor: "bottom", offset: [0, -(PIN_H + 6)],
+    anchor: "bottom", offset: [0, -(PIN_H + 4)],
     maxWidth: "230px", className: "building-pin-popup",
   });
+
+  let hideTimer: ReturnType<typeof setTimeout> | null = null;
+  let hoveredMeta: GeoJsonBuildingMeta | null = null;
+
+  function cancelHide() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function scheduleHide() {
+    cancelHide();
+    hideTimer = setTimeout(() => {
+      popup.remove();
+      hoveredMeta = null;
+    }, 280);
+  }
+
+  function wirePopupElement() {
+    const el = popup.getElement();
+    if (!el || el.dataset.wired === "1") return;
+    el.dataset.wired = "1";
+    el.addEventListener("mouseenter", cancelHide);
+    el.addEventListener("mouseleave", scheduleHide);
+    el.addEventListener("click", () => {
+      if (!hoveredMeta) return;
+      onSelect(hoveredMeta.id, hoveredMeta);
+      cancelHide();
+      popup.remove();
+      hoveredMeta = null;
+    });
+  }
 
   for (const layerId of [LAYER_PINS, LAYER_PINS_SELECTED]) {
     map.on("click", layerId, (e) => {
@@ -513,16 +718,19 @@ function attachPinInteractions(
       const f = e.features?.[0];
       const meta = f ? buildingMetaFromFeature(f) : null;
       if (!f || !meta) return;
+      cancelHide();
+      hoveredMeta = meta;
       const coord = (f.geometry as GeoJSON.Point).coordinates as [number, number];
       popup
         .setLngLat(coord)
-        .setHTML(`<div style="padding:12px;width:210px;font-family:system-ui,-apple-system,sans-serif;">${renderTooltipBody(meta, getBuilding(meta.id))}</div>`)
+        .setHTML(renderTooltipBody(meta, getBuilding(meta.id)))
         .addTo(map);
+      requestAnimationFrame(wirePopupElement);
     });
 
     map.on("mouseleave", layerId, () => {
       map.getCanvas().style.cursor = "";
-      popup.remove();
+      scheduleHide();
     });
   }
 }
@@ -538,10 +746,10 @@ async function loadCampusGeojson() {
   }
   const centroids = new Map<string, [number, number]>();
   for (const f of cachedGeojson.features) {
-    const id = f.properties?.building_id as string | undefined;
-    if (!id) continue;
+    const meta = buildingMetaFromFeature(f);
+    if (!meta || centroids.has(meta.id)) continue;
     const c = centroidFromFeature(f);
-    if (c) centroids.set(id, c);
+    if (c) centroids.set(meta.id, c);
   }
   return { geojson: cachedGeojson, centroids };
 }
@@ -554,6 +762,12 @@ export default function CampusMap({
   onSelectBuilding,
   leftPanelCollapsed = false,
   rightSidebarOpen   = false,
+  route              = null,
+  userLocation       = null,
+  onUserLocationChange,
+  focusPoint         = null,
+  viewResetNonce     = 0,
+  onCampusHomeClick,
 }: CampusMapProps) {
   const containerRef      = useRef<HTMLDivElement>(null);
   const mapRef            = useRef<maplibregl.Map | null>(null);
@@ -562,11 +776,21 @@ export default function CampusMap({
   const centroidsRef      = useRef<Map<string, [number, number]>>(new Map());
   const paddingRef        = useRef(buildMapPadding(leftPanelCollapsed, rightSidebarOpen));
   const buildingsMapRef   = useRef<Map<string, Building>>(new Map());
+  const routeRef          = useRef<DirectionsResult | null>(route);
+  const userLocationRef   = useRef<UserLocation | null>(userLocation);
+  const userMarkerRef     = useRef<maplibregl.Marker | null>(null);
+  const cameraTokenRef    = useRef(0);
+  const lastViewResetRef  = useRef(0);
 
   paddingRef.current = buildMapPadding(leftPanelCollapsed, rightSidebarOpen);
+  routeRef.current = route;
+  userLocationRef.current = userLocation;
 
   const onSelectRef = useRef(onSelectBuilding);
   onSelectRef.current = onSelectBuilding;
+
+  const onUserLocationChangeRef = useRef(onUserLocationChange);
+  onUserLocationChangeRef.current = onUserLocationChange;
 
   useEffect(() => {
     buildingsMapRef.current = new Map(buildings.map((b) => [b.id, b]));
@@ -591,7 +815,7 @@ export default function CampusMap({
       center:  INITIAL_CENTER,
       zoom:    INITIAL_ZOOM,
       pitch:   0,
-      bearing: getOrientationBearing(),
+      bearing: 0,
     });
 
     mapRef.current       = map;
@@ -601,7 +825,7 @@ export default function CampusMap({
       if (cancelled || !isMapReady(map)) return;
       const [{ geojson, centroids }, [pinImg, pinSelectedImg]] = await Promise.all([
         loadCampusGeojson(),
-        Promise.all([makePinImage(PIN_GOLD), makePinImage(PIN_GOLD_SELECTED, 1.15)]),
+        Promise.all([makePinImage(PIN_GOLD), makePinImage(PIN_GOLD_SELECTED, 1.35)]),
       ]);
       if (cancelled || !isMapReady(map)) return;
 
@@ -614,6 +838,7 @@ export default function CampusMap({
       addSatelliteWithMask(map, holeRings);
       addZoneOutlines(map, zones);
       addBuildingSource(map, geojson);
+      addRouteLayers(map);
       addPinLayers(map, geojson);
       attachPinInteractions(
         map,
@@ -626,8 +851,12 @@ export default function CampusMap({
 
       map.resize();
       syncPinSelection(map, prevSelectedIdRef.current);
+      syncRoute(map, routeRef.current);
+      syncUserLocationMarker(map, userMarkerRef, userLocationRef.current);
 
-      if (prevSelectedIdRef.current) {
+      if (routeRef.current) {
+        fitRouteBounds(map, routeRef.current, paddingRef.current);
+      } else if (prevSelectedIdRef.current) {
         focusBuilding(map, prevSelectedIdRef.current, centroidsRef.current, paddingRef.current, false);
       } else {
         fitCampusView(map, paddingRef.current, false);
@@ -669,7 +898,63 @@ export default function CampusMap({
     return () => observer.disconnect();
   }, [resizeMap]);
 
-  useEffect(() => { resizeMap(); }, [selectedId, resizeMap]);
+  // ── Unified camera sync (single owner — avoids competing flyTo/fitBounds) ───
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !layersReadyRef.current) {
+      prevSelectedIdRef.current = selectedId;
+      return;
+    }
+
+    syncPinSelection(map, selectedId);
+    prevSelectedIdRef.current = selectedId;
+
+    const token = ++cameraTokenRef.current;
+    const padding = paddingRef.current;
+    const isHomeReset = viewResetNonce > 0 && viewResetNonce !== lastViewResetRef.current;
+
+    const applyCamera = (animate: boolean) => {
+      if (token !== cameraTokenRef.current || !isMapReady(map)) return;
+      try { map.resize(); } catch { return; }
+
+      if (focusPoint) {
+        map.flyTo({
+          center:   focusPoint,
+          zoom:     19,
+          pitch:    0,
+          bearing:  0,
+          padding,
+          duration: animate ? 600 : 0,
+        });
+        return;
+      }
+      if (route) {
+        fitRouteBounds(map, route, padding);
+        return;
+      }
+      if (selectedId) {
+        focusBuilding(map, selectedId, centroidsRef.current, padding, animate);
+        return;
+      }
+      fitCampusView(map, padding, animate);
+    };
+
+    if (isHomeReset) {
+      lastViewResetRef.current = viewResetNonce;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => applyCamera(true));
+      });
+    } else {
+      applyCamera(true);
+    }
+  }, [
+    selectedId,
+    route,
+    focusPoint,
+    leftPanelCollapsed,
+    rightSidebarOpen,
+    viewResetNonce,
+  ]);
 
   // ── Orientation-aware refit on window resize (debounced 300 ms) ────────────
   useEffect(() => {
@@ -680,9 +965,8 @@ export default function CampusMap({
         const map = mapRef.current;
         if (!isMapReady(map)) return;
         try { map.resize(); } catch { return; }
-        // Only refit when no building is open; flyTo keeps selection view intact
-        if (!prevSelectedIdRef.current) {
-          fitCampusView(map, paddingRef.current);
+        if (!routeRef.current && !prevSelectedIdRef.current) {
+          fitCampusView(map, paddingRef.current, false);
         }
       }, 300);
     };
@@ -690,35 +974,19 @@ export default function CampusMap({
     return () => { window.removeEventListener("resize", onResize); clearTimeout(timer); };
   }, []);
 
-  // ── Selection sync + camera ────────────────────────────────────────────────
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !layersReadyRef.current) {
-      prevSelectedIdRef.current = selectedId;
-      return;
-    }
-
-    syncPinSelection(map, selectedId);
-
-    if (selectedId !== null) {
-      focusBuilding(map, selectedId, centroidsRef.current, paddingRef.current);
-    } else {
-      fitCampusView(map, paddingRef.current);
-    }
-
-    prevSelectedIdRef.current = selectedId;
-  }, [selectedId]);
-
-  // Reframe when panels open/close
+  // ── Route polyline sync ─────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !layersReadyRef.current) return;
-    if (selectedId) {
-      focusBuilding(map, selectedId, centroidsRef.current, paddingRef.current, false);
-    } else {
-      fitCampusView(map, paddingRef.current, false);
-    }
-  }, [leftPanelCollapsed, rightSidebarOpen]);
+    syncRoute(map, route);
+  }, [route]);
+
+  // ── User location marker sync ───────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !layersReadyRef.current) return;
+    syncUserLocationMarker(map, userMarkerRef, userLocation);
+  }, [userLocation]);
 
   return (
     <div className="campus-map-container absolute inset-0">
@@ -729,6 +997,10 @@ export default function CampusMap({
         <button
           type="button"
           onClick={() => {
+            if (onCampusHomeClick) {
+              onCampusHomeClick();
+              return;
+            }
             const map = mapRef.current;
             if (!isMapReady(map)) return;
             fitCampusView(map, paddingRef.current);
@@ -756,6 +1028,33 @@ export default function CampusMap({
             </svg>
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (!navigator.geolocation) return;
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                const loc = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+                onUserLocationChangeRef.current?.(loc);
+                const map = mapRef.current;
+                if (isMapReady(map) && !routeRef.current) {
+                  map.flyTo({ center: [loc.lng, loc.lat], zoom: 17, duration: 900 });
+                }
+              },
+              (err) => console.error("[geolocation]", err.message),
+              { enableHighAccuracy: true, timeout: 8000 },
+            );
+          }}
+          title="My location"
+          className="map-control-btn"
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M12 8a4 4 0 100 8 4 4 0 000-8z" />
+            <path strokeLinecap="round" d="M12 2v3m0 14v3M2 12h3m14 0h3" />
+          </svg>
+        </button>
       </div>
     </div>
   );

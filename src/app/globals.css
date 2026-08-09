@@ -41,15 +41,24 @@ body {
 }
 
 /* Building pin hover card (maplibregl.Popup, className building-pin-popup) */
+.building-pin-popup {
+  pointer-events: auto;
+}
 .building-pin-popup .maplibregl-popup-content {
   padding: 0;
   border-radius: 10px;
   box-shadow: 0 4px 20px rgb(0 0 0 / 18%), 0 1px 4px rgb(0 0 0 / 8%);
   overflow: hidden;
+  pointer-events: auto;
+}
+.building-pin-popup .maplibregl-popup-tip {
   pointer-events: none;
 }
-.building-pin-popup {
-  pointer-events: none; /* hover card must not steal the pin's mouse events */
+.building-pin-popup [data-building-hover-card]:hover {
+  background: #fffbeb;
+}
+.building-pin-popup [data-building-hover-card]:active {
+  background: #fef3c7;
 }
 
 /* Map must fill its flex parent */

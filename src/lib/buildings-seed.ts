@@ -1,6 +1,11 @@
 import type { Building } from "@/types";
+import { enrichBuildings, getBuildingHeroUrl } from "@/lib/building-media";
 
 const NOW = "2026-01-01T00:00:00.000Z";
+
+function hero(id: string): string | null {
+  return getBuildingHeroUrl(id);
+}
 
 /** Local fallback — mirrors supabase/migrations/001_initial_schema.sql seed data. */
 export const BUILDINGS_SEED: Building[] = [
@@ -12,7 +17,7 @@ export const BUILDINGS_SEED: Building[] = [
     lng: -92.0237,
     description:
       "State-of-the-art facility supporting science, technology, engineering, and mathematics research across campus.",
-    image_url: null,
+    image_url: hero("stem-building"),
     floors: 4,
     year_built: 2016,
     created_at: NOW,
@@ -25,7 +30,7 @@ export const BUILDINGS_SEED: Building[] = [
     lat: 34.244,
     lng: -92.0221,
     description: "Instructional facility for science and engineering programs.",
-    image_url: null,
+    image_url: hero("woodward-hall"),
     floors: 3,
     year_built: null,
     created_at: NOW,
@@ -158,7 +163,20 @@ export const BUILDINGS_SEED: Building[] = [
     lat: 34.244,
     lng: -92.02,
     description: "Houses human sciences, nutrition, and social work programs.",
-    image_url: null,
+    image_url: hero("human-sciences-building"),
+    floors: 2,
+    year_built: null,
+    created_at: NOW,
+    updated_at: NOW,
+  },
+  {
+    id: "larrison-hall",
+    name: "Larrison Hall",
+    code: "LRH",
+    lat: 34.2435,
+    lng: -92.0224,
+    description: "Academic building on the main campus.",
+    image_url: hero("larrison-hall"),
     floors: 2,
     year_built: null,
     created_at: NOW,
@@ -185,7 +203,7 @@ export const BUILDINGS_SEED: Building[] = [
     lng: -92.0239,
     description:
       "Extension complex supporting 1890 land-grant research and community outreach programs.",
-    image_url: null,
+    image_url: hero("parker-1890-complex"),
     floors: 2,
     year_built: null,
     created_at: NOW,
@@ -198,10 +216,12 @@ export const BUILDINGS_SEED: Building[] = [
     lat: 34.2526,
     lng: -92.0242,
     description: "Applied research in sustainable agriculture, soil science, and food systems.",
-    image_url: null,
+    image_url: hero("parker-ag-research"),
     floors: 1,
     year_built: 2001,
     created_at: NOW,
     updated_at: NOW,
   },
 ];
+
+export const BUILDINGS_SEED_ENRICHED = enrichBuildings(BUILDINGS_SEED);

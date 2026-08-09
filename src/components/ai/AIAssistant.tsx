@@ -11,9 +11,21 @@ const SUGGESTED_PROMPTS = [
   "Which buildings have NSF grants?",
   "Who works on USDA research?",
   "What is the biggest grant on campus?",
-  "Tell me about the STEM Academy",
+  "Tell me about the STEM Building",
   "Who is David Fernandez?",
 ];
+
+function AtlasIcon({ className }: { className?: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/uapb-atlas-icon.png"
+      alt=""
+      className={className}
+      draggable={false}
+    />
+  );
+}
 
 const TYPING_DOTS = ["·", "··", "···"];
 
@@ -151,10 +163,10 @@ export default function AIAssistant() {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label="Open UAPB Atlas AI assistant"
-        className={`fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 ${
+        className={`fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 overflow-hidden border-2 ${
           open
-            ? "bg-gray-800 rotate-180"
-            : "bg-[#EEB310] hover:bg-[#d9a00e] hover:scale-110"
+            ? "bg-gray-800 border-gray-600 rotate-0"
+            : "border-[#EEB310] bg-black hover:scale-110 hover:shadow-[#EEB310]/30"
         }`}
       >
         {open ? (
@@ -162,9 +174,7 @@ export default function AIAssistant() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         ) : (
-          <svg className="h-6 w-6 text-gray-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-          </svg>
+          <AtlasIcon className="h-full w-full object-cover scale-125" />
         )}
       </button>
 
@@ -175,16 +185,14 @@ export default function AIAssistant() {
 
       {/* Chat panel */}
       <div
-        className={`fixed bottom-24 right-6 z-50 w-[360px] max-h-[560px] flex flex-col bg-gray-900 rounded-2xl shadow-2xl border border-white/10 overflow-hidden transition-all duration-300 origin-bottom-right ${
+        className={`fixed bottom-24 right-6 z-50 w-[min(360px,calc(100vw-3rem))] max-h-[min(560px,calc(100vh-7rem))] flex flex-col bg-gray-900 rounded-2xl shadow-2xl border border-white/10 overflow-hidden transition-all duration-300 origin-bottom-right ${
           open ? "scale-100 opacity-100" : "scale-90 opacity-0 pointer-events-none"
         }`}
       >
         {/* Header */}
         <div className="flex items-center gap-3 px-4 py-3 bg-black/50 border-b border-white/10 shrink-0">
-          <div className="h-8 w-8 rounded-full bg-[#EEB310] flex items-center justify-center shrink-0">
-            <svg className="h-4 w-4 text-gray-900" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-            </svg>
+          <div className="h-8 w-8 rounded-full overflow-hidden border border-[#EEB310]/50 shrink-0 bg-black">
+            <AtlasIcon className="h-full w-full object-cover scale-125" />
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-white">UAPB Atlas</p>
@@ -212,10 +220,8 @@ export default function AIAssistant() {
           {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
               {msg.role === "assistant" && (
-                <div className="h-6 w-6 rounded-full bg-[#EEB310]/20 border border-[#EEB310]/30 flex items-center justify-center shrink-0 mt-0.5 mr-2">
-                  <svg className="h-3 w-3 text-[#EEB310]" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                  </svg>
+                <div className="h-6 w-6 rounded-full overflow-hidden border border-[#EEB310]/30 shrink-0 mt-0.5 mr-2 bg-black">
+                  <AtlasIcon className="h-full w-full object-cover scale-125" />
                 </div>
               )}
               <div
@@ -233,10 +239,8 @@ export default function AIAssistant() {
           {/* Typing indicator */}
           {loading && (
             <div className="flex justify-start">
-              <div className="h-6 w-6 rounded-full bg-[#EEB310]/20 border border-[#EEB310]/30 flex items-center justify-center shrink-0 mt-0.5 mr-2">
-                <svg className="h-3 w-3 text-[#EEB310]" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                </svg>
+              <div className="h-6 w-6 rounded-full overflow-hidden border border-[#EEB310]/30 shrink-0 mt-0.5 mr-2 bg-black">
+                <AtlasIcon className="h-full w-full object-cover scale-125" />
               </div>
               <div className="bg-white/8 border border-white/5 rounded-2xl rounded-bl-sm px-4 py-2.5">
                 <span className="text-[#EEB310] text-lg tracking-widest font-bold">
