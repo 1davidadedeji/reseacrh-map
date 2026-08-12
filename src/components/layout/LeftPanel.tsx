@@ -140,38 +140,42 @@ export default function LeftPanel({
     return sortBuildingsWithPhotosFirst(list);
   }, [buildings, searchQuery, showAllCampusBuildings]);
 
-  if (collapsed) {
-    return (
-      <div className="h-full flex flex-col items-center py-4 gap-4 bg-white border-r border-gray-200 w-12 shadow-sm z-10">
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          title="Expand panel"
-          className="p-2 rounded-lg text-gray-400 hover:text-[#EEB310] hover:bg-amber-50 transition-colors"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            onTabChange("directions");
-            onToggleCollapse();
-          }}
-          title="Directions"
-          className="p-2 rounded-lg text-gray-400 hover:text-[#EEB310] hover:bg-amber-50 transition-colors"
-        >
-          <IconDirections className="h-4 w-4" />
-        </button>
-      </div>
-    );
-  }
-
   const showDetail = tab === "locations" && selectedId;
 
   return (
-    <aside className="h-full flex flex-col bg-[#f1f1f1] border-r border-gray-200 w-[min(100vw,380px)] sm:w-[400px] shrink-0 shadow-sm z-10">
+    <aside
+      className={`h-full flex flex-col border-r border-gray-200 shrink-0 shadow-sm z-10 overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none ${
+        collapsed
+          ? "w-12 bg-white"
+          : "w-[min(100vw,380px)] sm:w-[400px] bg-[#f1f1f1]"
+      }`}
+    >
+      {collapsed ? (
+        <div className="h-full flex flex-col items-center py-4 gap-4">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            title="Expand panel"
+            className="p-2 rounded-lg text-gray-400 hover:text-[#EEB310] hover:bg-amber-50 transition-colors"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onTabChange("directions");
+              onToggleCollapse();
+            }}
+            title="Directions"
+            className="p-2 rounded-lg text-gray-400 hover:text-[#EEB310] hover:bg-amber-50 transition-colors"
+          >
+            <IconDirections className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <>
       {/* Search + directions peer row */}
       <div className="shrink-0 flex items-center gap-1.5 px-3 py-2.5 bg-white border-b border-gray-200">
         <div className="relative flex-1 min-w-0">
@@ -346,6 +350,8 @@ export default function LeftPanel({
           University of Arkansas at Pine Bluff · Research Office
         </p>
       </div>
+        </>
+      )}
     </aside>
   );
 }

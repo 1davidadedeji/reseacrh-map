@@ -156,3 +156,13 @@ body {
     transform: scale(1.12);
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .building-map-pin,
+  .building-map-pin--selected,
+  .map-control-btn {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
