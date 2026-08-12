@@ -180,7 +180,7 @@ export interface DirectoryResearcher extends Researcher {
   building_name: string;
 }
 
-/** Every seeded researcher across all buildings, for the People Directory's local fallback. */
+/** Every seeded researcher across all buildings, for the Faculty & Researchers local fallback. */
 export function getAllResearchSeed(): DirectoryResearcher[] {
   const buildingNames = new Map(BUILDINGS_SEED.map((b) => [b.id, b.name]));
   return Object.values(RESEARCH_SEED)
