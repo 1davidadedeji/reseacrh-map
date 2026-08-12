@@ -25,7 +25,10 @@ import {
   PIN_GOLD_SELECTED,
   PIN_SECONDARY,
   RIGHT_SIDEBAR_W,
+  ROUTE_STEP_ZOOM,
   SECONDARY_PIN_MIN_ZOOM,
+  cameraDuration,
+  prefersReducedMotion,
 } from "@/lib/map-config";
 import {
   WORLD_RING,
@@ -145,20 +148,27 @@ function buildMapPadding(lc: boolean, rs: boolean): PaddingOptions {
 
 function fitCampusView(map: maplibregl.Map, padding: PaddingOptions, animate = true) {
   try {
+    const reduced = prefersReducedMotion();
+    const token = Symbol("fitCampus");
+    (map as maplibregl.Map & { __fitToken?: symbol }).__fitToken = token;
     map.fitBounds(getMainCampusFitBounds(), {
       padding,
       pitch:   0,
       bearing: 0,
-      duration: animate ? 600 : 0,
+      duration: cameraDuration(animate ? 600 : 0, reduced),
       maxZoom:  BUILDING_FOCUS_ZOOM,
     });
     const enforceMinZoom = () => {
+      if ((map as maplibregl.Map & { __fitToken?: symbol }).__fitToken !== token) return;
       if (!isMapReady(map)) return;
       if (map.getZoom() < CAMPUS_MIN_ZOOM) {
-        map.easeTo({ zoom: CAMPUS_MIN_ZOOM, duration: animate ? 300 : 0 });
+        map.easeTo({
+          zoom: CAMPUS_MIN_ZOOM,
+          duration: cameraDuration(animate ? 300 : 0, reduced),
+        });
       }
     };
-    if (animate) map.once("moveend", enforceMinZoom);
+    if (animate && !reduced) map.once("moveend", enforceMinZoom);
     else enforceMinZoom();
   } catch { /* ignore during teardown */ }
 }
@@ -293,7 +303,7 @@ function focusBuilding(
       pitch:   0,
       bearing: 0,
       padding,
-      duration: animate ? 900 : 0,
+      duration: cameraDuration(animate ? 900 : 0, prefersReducedMotion()),
     });
   } catch { /* teardown */ }
 }
@@ -514,8 +524,8 @@ function fitRouteBounds(map: maplibregl.Map, route: DirectionsResult, padding: P
       padding,
       pitch:   0,
       bearing: 0,
-      duration: 600,
-      maxZoom:  18,
+      duration: cameraDuration(600, prefersReducedMotion()),
+      maxZoom:  BUILDING_FOCUS_ZOOM,
     });
   } catch { /* teardown */ }
 }
@@ -824,11 +834,11 @@ export default function CampusMap({
       if (focusPoint) {
         map.flyTo({
           center:   focusPoint,
-          zoom:     19,
+          zoom:     ROUTE_STEP_ZOOM,
           pitch:    0,
           bearing:  0,
           padding,
-          duration: animate ? 600 : 0,
+          duration: cameraDuration(animate ? 600 : 0, prefersReducedMotion()),
         });
         return;
       }
@@ -919,13 +929,13 @@ export default function CampusMap({
         </button>
 
         <div className="map-control-group">
-          <button type="button" onClick={() => mapRef.current?.zoomIn({ duration: 250 })}
+          <button type="button" onClick={() => mapRef.current?.zoomIn({ duration: cameraDuration(250, prefersReducedMotion()) })}
             title="Zoom in" className="map-control-btn map-control-btn--grouped">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" d="M12 5v14M5 12h14" />
             </svg>
           </button>
-          <button type="button" onClick={() => mapRef.current?.zoomOut({ duration: 250 })}
+          <button type="button" onClick={() => mapRef.current?.zoomOut({ duration: cameraDuration(250, prefersReducedMotion()) })}
             title="Zoom out" className="map-control-btn map-control-btn--grouped border-t border-gray-200">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" d="M5 12h14" />
@@ -943,7 +953,11 @@ export default function CampusMap({
                 onUserLocationChangeRef.current?.(loc);
                 const map = mapRef.current;
                 if (isMapReady(map) && !routeRef.current) {
-                  map.flyTo({ center: [loc.lng, loc.lat], zoom: 17, duration: 900 });
+                  map.flyTo({
+                    center: [loc.lng, loc.lat],
+                    zoom: 17,
+                    duration: cameraDuration(900, prefersReducedMotion()),
+                  });
                 }
               },
               (err) => console.error("[geolocation]", err.message),
