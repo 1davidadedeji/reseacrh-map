@@ -219,11 +219,13 @@ function satelliteTileURL(): string | null {
   return `https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key=${MAPTILER_KEY}`;
 }
 
-// Insertion point that keeps satellite + mask above every road/line layer
-// (no basemap roads over the campus imagery) but below the basemap's
-// symbol/label layers: the first symbol layer in the loaded style.
+// Insertion point: above land fills, below basemap line/road layers so the
+// paper mask still hides satellite outside campus while roads/paths draw on
+// top of that paper for neighborhood context. Campus holes stay clean via
+// line-opacity + `within` (see suppressBasemapLinesInsideCampus).
 function findSatelliteInsertPoint(map: maplibregl.Map): string | undefined {
-  return (map.getStyle()?.layers ?? []).find((l) => l.type === "symbol")?.id;
+  const layers = map.getStyle()?.layers ?? [];
+  return layers.find((l) => l.type === "line" || l.type === "symbol")?.id;
 }
 
 function basemapBackgroundColor(map: maplibregl.Map): string {
@@ -243,6 +245,34 @@ function basemapBackgroundColor(map: maplibregl.Map): string {
   return "#f8f8f6";
 }
 
+/** Hide basemap line work that lies fully inside campus satellite holes. */
+function suppressBasemapLinesInsideCampus(map: maplibregl.Map, zones: Zone[]) {
+  if (zones.length === 0) return;
+  const campus = featureCollection(zones);
+  for (const layer of map.getStyle()?.layers ?? []) {
+    if (layer.type !== "line") continue;
+    if (
+      layer.id === LAYER_ZONE_OUTLINE ||
+      layer.id.startsWith("route-") ||
+      layer.id === LAYER_MASK
+    ) {
+      continue;
+    }
+    try {
+      const prev = map.getPaintProperty(layer.id, "line-opacity");
+      const base = prev === undefined ? 1 : prev;
+      map.setPaintProperty(layer.id, "line-opacity", [
+        "case",
+        ["within", campus],
+        0,
+        base,
+      ] as ExpressionSpecification);
+    } catch {
+      /* some style layers reject paint overrides */
+    }
+  }
+}
+
 // ── Satellite + mask layers ────────────────────────────────────────────────────
 
 function addSatelliteWithMask(map: maplibregl.Map, holeRings: GeoJSON.Position[][]) {
@@ -256,8 +286,9 @@ function addSatelliteWithMask(map: maplibregl.Map, holeRings: GeoJSON.Position[]
   map.addLayer({ id: LAYER_SATELLITE, type: "raster", source: SATELLITE_SOURCE }, beforeId);
 
   // Mask: world polygon with zone-shaped holes, painted in the basemap
-  // background color directly above the satellite layer. Outside the holes
-  // the opaque mask hides satellite and roads; inside, satellite shows through.
+  // background color. Outside holes the mask covers satellite; road layers
+  // sit above this stack so the surrounding basemap still shows streets.
+  // Inside holes, satellite shows and roads are suppressed (see below).
   map.addSource(MASK_SOURCE, {
     type: "geojson",
     data: {
@@ -758,6 +789,7 @@ export default function CampusMap({
 
       const { zones, holeRings } = getMaskZones(geojson);
       addSatelliteWithMask(map, holeRings);
+      suppressBasemapLinesInsideCampus(map, zones);
       addZoneOutlines(map, zones);
       addBuildingSource(map, geojson);
       addRouteLayers(map);
