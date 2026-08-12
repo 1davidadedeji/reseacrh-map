@@ -147,7 +147,7 @@ export default function LeftPanel({
       className={`h-full flex flex-col border-r border-gray-200 shrink-0 shadow-sm z-10 overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none ${
         collapsed
           ? "w-12 bg-white"
-          : "w-[min(100vw,380px)] sm:w-[400px] bg-[#f1f1f1]"
+          : "w-[min(100vw,380px)] sm:w-100 bg-[#f1f1f1]"
       }`}
     >
       {collapsed ? (

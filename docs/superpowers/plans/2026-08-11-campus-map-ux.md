@@ -610,7 +610,7 @@ Replace early-return collapsed `<div className="w-12">` with one `<aside>`:
 ```tsx
 <aside
   className={`shrink-0 h-full border-r border-gray-200 bg-white flex flex-col transition-[width] duration-300 ease-out ${
-    collapsed ? "w-12" : "w-[400px]"
+    collapsed ? "w-12" : "w-100"
   } motion-reduce:transition-none`}
 >
   {collapsed ? <CollapsedRail ... /> : <ExpandedContent ... />}

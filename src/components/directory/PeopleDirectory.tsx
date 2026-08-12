@@ -220,7 +220,7 @@ export default function PeopleDirectory({ embedded = false }: { embedded?: boole
                     </p>
                   </div>
                   {r.email && (
-                    <span className="hidden sm:inline text-[11px] text-gray-400 truncate max-w-[200px]">
+                    <span className="hidden sm:inline text-[11px] text-gray-400 truncate max-w-50">
                       {r.email}
                     </span>
                   )}
