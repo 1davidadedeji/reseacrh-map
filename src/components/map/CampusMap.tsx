@@ -146,13 +146,28 @@ function buildMapPadding(lc: boolean, rs: boolean): PaddingOptions {
   };
 }
 
+/** Keep fitBounds padding inside the canvas so MapLibre doesn't warn/fail. */
+function clampPadding(map: maplibregl.Map, padding: PaddingOptions): PaddingOptions {
+  const el = map.getContainer();
+  const w = el.clientWidth;
+  const h = el.clientHeight;
+  if (w < 64 || h < 64) return { top: 0, right: 0, bottom: 0, left: 0 };
+  return {
+    left:   Math.min(Number(padding.left ?? 0), Math.floor(w * 0.45)),
+    right:  Math.min(Number(padding.right ?? 0), Math.floor(w * 0.25)),
+    top:    Math.min(Number(padding.top ?? 0), Math.floor(h * 0.2)),
+    bottom: Math.min(Number(padding.bottom ?? 0), Math.floor(h * 0.2)),
+  };
+}
+
 function fitCampusView(map: maplibregl.Map, padding: PaddingOptions, animate = true) {
   try {
+    if (map.getContainer().clientWidth < 64 || map.getContainer().clientHeight < 64) return;
     const reduced = prefersReducedMotion();
     const token = Symbol("fitCampus");
     (map as maplibregl.Map & { __fitToken?: symbol }).__fitToken = token;
     map.fitBounds(getMainCampusFitBounds(), {
-      padding,
+      padding: clampPadding(map, padding),
       pitch:   0,
       bearing: 0,
       duration: cameraDuration(animate ? 600 : 0, reduced),
@@ -302,7 +317,7 @@ function focusBuilding(
       zoom:    BUILDING_FOCUS_ZOOM,
       pitch:   0,
       bearing: 0,
-      padding,
+      padding: clampPadding(map, padding),
       duration: cameraDuration(animate ? 900 : 0, prefersReducedMotion()),
     });
   } catch { /* teardown */ }
@@ -521,7 +536,7 @@ function fitRouteBounds(map: maplibregl.Map, route: DirectionsResult, padding: P
   try {
     const [w, s, e, n] = bbox({ type: "Feature", geometry: route.geometry, properties: {} });
     map.fitBounds([[w, s], [e, n]], {
-      padding,
+      padding: clampPadding(map, padding),
       pitch:   0,
       bearing: 0,
       duration: cameraDuration(600, prefersReducedMotion()),
@@ -837,7 +852,7 @@ export default function CampusMap({
           zoom:     ROUTE_STEP_ZOOM,
           pitch:    0,
           bearing:  0,
-          padding,
+          padding:  clampPadding(map, padding),
           duration: cameraDuration(animate ? 600 : 0, prefersReducedMotion()),
         });
         return;
