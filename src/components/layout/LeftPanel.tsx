@@ -1,19 +1,23 @@
 "use client";
 
-import { useMemo, useRef, useEffect, useState } from "react";
+import { useMemo, useRef, useEffect } from "react";
 import type { Building } from "@/types";
 import DirectionsPanel from "@/components/layout/DirectionsPanel";
 import BuildingDetailPanel from "@/components/layout/BuildingDetailPanel";
+import PlaceDetailPanel from "@/components/layout/PlaceDetailPanel";
 import { sortBuildingsWithPhotosFirst } from "@/lib/building-media";
+import { displayBuildingName, resolvePinTier } from "@/lib/building-catalog";
 import { IconDirections } from "@/components/building/MediaIcons";
 import type { DirectionsResult } from "@/lib/directions";
 import type { UserLocation } from "@/components/map/CampusMap";
+import type { GeoJsonBuildingMeta } from "@/types/building-selection";
 
 export type SidebarTab = "locations" | "directions";
 
 interface LeftPanelProps {
   buildings: Building[];
   selectedId: string | null;
+  selectedMeta?: GeoJsonBuildingMeta | null;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   onSelectBuilding: (id: string) => void;
@@ -33,6 +37,8 @@ interface LeftPanelProps {
   onToIdChange: (id: string) => void;
   onGetDirections: (buildingId: string) => void;
   onResearcherClick: (researcherId: string) => void;
+  showAllCampusBuildings: boolean;
+  onShowAllCampusBuildingsChange: (value: boolean) => void;
 }
 
 function BuildingRow({
@@ -84,6 +90,7 @@ function BuildingRow({
 export default function LeftPanel({
   buildings,
   selectedId,
+  selectedMeta = null,
   searchQuery,
   onSearchChange,
   onSelectBuilding,
@@ -103,9 +110,12 @@ export default function LeftPanel({
   onToIdChange,
   onGetDirections,
   onResearcherClick,
+  showAllCampusBuildings,
+  onShowAllCampusBuildingsChange,
 }: LeftPanelProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const selectedBuilding = buildings.find((b) => b.id === selectedId) ?? null;
+  const selectedIsSecondary = selectedId ? resolvePinTier(selectedId) === "secondary" : false;
 
   useEffect(() => {
     if (!selectedId || !listRef.current || tab !== "locations") return;
@@ -114,18 +124,21 @@ export default function LeftPanel({
   }, [selectedId, tab]);
 
   const filtered = useMemo(() => {
+    const scoped = showAllCampusBuildings
+      ? buildings
+      : buildings.filter((b) => resolvePinTier(b.id) === "primary");
     const q = searchQuery.toLowerCase().trim();
     const list = q
-      ? buildings.filter(
+      ? scoped.filter(
           (b) =>
             b.name.toLowerCase().includes(q) ||
             b.code.toLowerCase().includes(q) ||
             b.description?.toLowerCase().includes(q)
         )
-      : buildings;
+      : scoped;
 
     return sortBuildingsWithPhotosFirst(list);
-  }, [buildings, searchQuery]);
+  }, [buildings, searchQuery, showAllCampusBuildings]);
 
   if (collapsed) {
     return (
@@ -248,11 +261,22 @@ export default function LeftPanel({
             onFromIdChange={onFromIdChange}
             onToIdChange={onToIdChange}
           />
+        ) : showDetail && selectedId && selectedIsSecondary ? (
+          <PlaceDetailPanel
+            buildingId={selectedId}
+            building={selectedBuilding}
+            meta={selectedMeta}
+            onBack={onClearSelection}
+            onGetDirections={onGetDirections}
+          />
         ) : showDetail && selectedId ? (
           <BuildingDetailPanel
             buildingId={selectedId}
-            displayName={selectedBuilding?.name ?? selectedId}
-            displayCode={selectedBuilding?.code}
+            displayName={displayBuildingName(
+              selectedId,
+              selectedBuilding?.name ?? selectedMeta?.name ?? selectedId,
+            )}
+            displayCode={selectedBuilding?.code ?? selectedMeta?.code}
             building={selectedBuilding}
             onBack={onClearSelection}
             onGetDirections={onGetDirections}
@@ -262,16 +286,28 @@ export default function LeftPanel({
           <>
             <div className="shrink-0 flex border-b border-gray-100 bg-gray-50">
               <div className="flex-1 py-2 text-center">
-                <p className="text-sm font-bold text-[#EEB310]">{buildings.length}</p>
-                <p className="text-[9px] uppercase tracking-wider text-gray-400">Buildings</p>
+                <p className="text-sm font-bold text-[#EEB310]">{filtered.length}</p>
+                <p className="text-[9px] uppercase tracking-wider text-gray-400">
+                  {showAllCampusBuildings ? "Campus" : "Research"}
+                </p>
               </div>
               <div className="flex-1 py-2 text-center border-l border-gray-100">
                 <p className="text-sm font-bold text-[#EEB310]">{filtered.length}</p>
                 <p className="text-[9px] uppercase tracking-wider text-gray-400">
-                  {searchQuery ? "Matches" : "On Map"}
+                  {searchQuery ? "Matches" : "Listed"}
                 </p>
               </div>
             </div>
+
+            <label className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-gray-100 text-[11px] text-gray-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showAllCampusBuildings}
+                onChange={(e) => onShowAllCampusBuildingsChange(e.target.checked)}
+                className="rounded border-gray-300 text-amber-600 focus:ring-[#EEB310]"
+              />
+              All campus buildings
+            </label>
 
             <div ref={listRef} className="flex-1 overflow-y-auto min-h-0">
               {buildings.length === 0 ? (

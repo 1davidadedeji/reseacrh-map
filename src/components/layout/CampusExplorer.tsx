@@ -36,6 +36,7 @@ export default function CampusExplorer() {
   const [toId, setToId] = useState("");
   const [openResearcherId, setOpenResearcherId] = useState<string | null>(null);
   const [viewResetNonce, setViewResetNonce] = useState(0);
+  const [showAllCampusBuildings, setShowAllCampusBuildings] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -153,6 +154,7 @@ export default function CampusExplorer() {
         <LeftPanel
           buildings={buildings}
           selectedId={selectedId}
+          selectedMeta={selectedMeta}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onSelectBuilding={(id) => {
@@ -178,6 +180,8 @@ export default function CampusExplorer() {
           onToIdChange={setToId}
           onGetDirections={handleGetDirections}
           onResearcherClick={handleResearcherClick}
+          showAllCampusBuildings={showAllCampusBuildings}
+          onShowAllCampusBuildingsChange={setShowAllCampusBuildings}
         />
 
         <main className="relative flex-1 min-w-0 min-h-0 overflow-hidden bg-gray-100">
@@ -193,6 +197,7 @@ export default function CampusExplorer() {
             focusPoint={focusPoint}
             viewResetNonce={viewResetNonce}
             onCampusHomeClick={resetToHome}
+            showAllCampusBuildings={showAllCampusBuildings}
           />
         </main>
       </div>

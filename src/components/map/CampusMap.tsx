@@ -23,7 +23,9 @@ import {
   MASK_OPACITY,
   PIN_GOLD,
   PIN_GOLD_SELECTED,
+  PIN_SECONDARY,
   RIGHT_SIDEBAR_W,
+  SECONDARY_PIN_MIN_ZOOM,
 } from "@/lib/map-config";
 import {
   WORLD_RING,
@@ -32,6 +34,12 @@ import {
   getMaskZones,
   type Zone,
 } from "@/lib/campus-mask";
+import {
+  displayBuildingName,
+  pinPriority,
+  resolveCategory,
+  resolvePinTier,
+} from "@/lib/building-catalog";
 
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY ?? "";
 
@@ -52,6 +60,7 @@ const LAYER_MASK          = "satellite-mask-layer";
 const LAYER_ZONE_OUTLINE  = "satellite-zones-outline";
 const LAYER_LABELS        = "buildings-labels";
 const LAYER_PINS          = "pins-layer";
+const LAYER_PINS_SECONDARY = "pins-layer-secondary";
 const LAYER_PINS_SELECTED = "pins-layer-selected";
 const LAYER_ROUTE_CASING  = "route-casing-layer";
 const LAYER_ROUTE_LINE    = "route-line-layer";
@@ -63,6 +72,7 @@ const ROUTE_BLUE        = "#2563eb";
 const ROUTE_BLUE_CASING = "#ffffff";
 
 const PIN_IMAGE          = "uapb-pin";
+const PIN_IMAGE_SECONDARY = "uapb-pin-secondary";
 const PIN_IMAGE_SELECTED = "uapb-pin-selected";
 
 // ── Pin SVG geometry (28 × 34) ─────────────────────────────────────────────────
@@ -93,6 +103,8 @@ interface CampusMapProps {
   /** Increment to force a full campus overview refit (logo / home reset). */
   viewResetNonce?: number;
   onCampusHomeClick?: () => void;
+  /** When true, secondary campus pins appear at all zoom levels. */
+  showAllCampusBuildings?: boolean;
 }
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -172,7 +184,7 @@ function buildingMetaFromFeature(f: GeoJSON.Feature): GeoJsonBuildingMeta | null
   if (!id || !isValidBuildingId(id)) return null;
   const name = String(p.name ?? id).trim();
   if (name.toLowerCase() === "building" && id.toLowerCase() === "building") return null;
-  return { id, name, code: String(p.code ?? "") };
+  return { id, name: displayBuildingName(id, name), code: String(p.code ?? "") };
 }
 
 // ── Map layer builders ─────────────────────────────────────────────────────────
@@ -313,12 +325,15 @@ function renderTooltipBody(meta: GeoJsonBuildingMeta, building: Building | null)
   const detailLine = details.length
     ? `<p style="margin:3px 0 0;font-size:10px;color:#aaa;">${details.join(" · ")}</p>` : "";
 
+  const cta =
+    resolvePinTier(meta.id) === "primary" ? "View research →" : "View place →";
+
   return `<div data-building-hover-card role="button" tabindex="0" style="padding:12px;width:210px;font-family:system-ui,-apple-system,sans-serif;cursor:pointer;">
     ${header}
     <p style="margin:0;font-weight:700;font-size:13px;color:#111;line-height:1.3;">${esc(meta.name)}</p>
     ${meta.code ? `<p style="margin:2px 0 0;font-size:10px;color:#999;font-family:monospace;letter-spacing:.04em;">${esc(meta.code)}</p>` : ""}
     ${desc}${detailLine}
-    <p style="margin:8px 0 0;font-size:10px;color:${PIN_GOLD};font-weight:600;">View research →</p>
+    <p style="margin:8px 0 0;font-size:10px;color:${PIN_GOLD};font-weight:600;">${cta}</p>
   </div>`;
 }
 
@@ -360,9 +375,11 @@ function buildPinFeatureCollection(
       geometry: { type: "Point", coordinates: coord },
       properties: {
         building_id: meta.id,
-        name:        meta.name,
+        name:        displayBuildingName(meta.id, meta.name),
         code:        meta.code,
-        priority:    (f.properties?.priority as number | undefined) ?? null,
+        pin_tier:    resolvePinTier(meta.id),
+        category:    resolveCategory(meta.id),
+        priority:    pinPriority(meta.id),
       },
     });
   }
@@ -371,10 +388,10 @@ function buildPinFeatureCollection(
 
 const PIN_ICON_SIZE: ExpressionSpecification =
   ["interpolate", ["linear"], ["zoom"], 13, 0.5, 15, 0.8, 16.5, 1.0];
+const PIN_ICON_SIZE_SECONDARY: ExpressionSpecification =
+  ["interpolate", ["linear"], ["zoom"], 16.5, 0.45, 18, 0.7];
 const PIN_ICON_SIZE_SELECTED: ExpressionSpecification =
   ["interpolate", ["linear"], ["zoom"], 13, 0.7, 15, 1.05, 16.5, 1.35];
-// Lower sort key wins collisions; buildings with a `priority` property beat
-// the rest (none in the data yet — activates automatically when added)
 const PIN_SORT_KEY: ExpressionSpecification = ["coalesce", ["get", "priority"], 999];
 
 function addPinLayers(map: maplibregl.Map, geojson: GeoJSON.FeatureCollection) {
@@ -383,17 +400,29 @@ function addPinLayers(map: maplibregl.Map, geojson: GeoJSON.FeatureCollection) {
 
   map.addLayer({
     id: LAYER_PINS, type: "symbol", source: PINS_SOURCE,
-    filter: ["!=", ["get", "building_id"], ""],
+    filter: ["==", ["get", "pin_tier"], "primary"],
     layout: {
       "icon-image":         PIN_IMAGE,
-      "icon-anchor":        "bottom",   // teardrop tip on the centroid
+      "icon-anchor":        "bottom",
       "icon-size":          PIN_ICON_SIZE,
-      "icon-allow-overlap": false,      // crowded pins auto-hide, reappear on zoom-in
+      "icon-allow-overlap": false,
       "symbol-sort-key":    PIN_SORT_KEY,
     },
   });
 
-  // Selected building: larger pin — always visible above others
+  map.addLayer({
+    id: LAYER_PINS_SECONDARY, type: "symbol", source: PINS_SOURCE,
+    minzoom: SECONDARY_PIN_MIN_ZOOM,
+    filter: ["==", ["get", "pin_tier"], "secondary"],
+    layout: {
+      "icon-image":         PIN_IMAGE_SECONDARY,
+      "icon-anchor":        "bottom",
+      "icon-size":          PIN_ICON_SIZE_SECONDARY,
+      "icon-allow-overlap": false,
+      "symbol-sort-key":    PIN_SORT_KEY,
+    },
+  });
+
   map.addLayer({
     id: LAYER_PINS_SELECTED, type: "symbol", source: PINS_SOURCE,
     filter: ["==", ["get", "building_id"], ""],
@@ -411,13 +440,34 @@ function addPinLayers(map: maplibregl.Map, geojson: GeoJSON.FeatureCollection) {
   });
 }
 
-// Selection is a filter swap: the selected pin moves from the base layer to
-// the darker selected layer, so the two images never draw on top of each other
+function syncSecondaryPinZoom(map: maplibregl.Map, showAll: boolean) {
+  if (!map.getLayer(LAYER_PINS_SECONDARY)) return;
+  try {
+    map.setLayerZoomRange(
+      LAYER_PINS_SECONDARY,
+      showAll ? 0 : SECONDARY_PIN_MIN_ZOOM,
+      24,
+    );
+  } catch { /* teardown */ }
+}
+
 function syncPinSelection(map: maplibregl.Map, selectedId: string | null) {
   if (!map.getLayer(LAYER_PINS)) return;
+  const id = selectedId ?? "";
   try {
-    map.setFilter(LAYER_PINS,          ["!=", ["get", "building_id"], selectedId ?? ""]);
-    map.setFilter(LAYER_PINS_SELECTED, ["==", ["get", "building_id"], selectedId ?? ""]);
+    map.setFilter(LAYER_PINS, [
+      "all",
+      ["==", ["get", "pin_tier"], "primary"],
+      ["!=", ["get", "building_id"], id],
+    ]);
+    if (map.getLayer(LAYER_PINS_SECONDARY)) {
+      map.setFilter(LAYER_PINS_SECONDARY, [
+        "all",
+        ["==", ["get", "pin_tier"], "secondary"],
+        ["!=", ["get", "building_id"], id],
+      ]);
+    }
+    map.setFilter(LAYER_PINS_SELECTED, ["==", ["get", "building_id"], id]);
   } catch { /* teardown */ }
 }
 
@@ -543,7 +593,7 @@ function attachPinInteractions(
     });
   }
 
-  for (const layerId of [LAYER_PINS, LAYER_PINS_SELECTED]) {
+  for (const layerId of [LAYER_PINS, LAYER_PINS_SECONDARY, LAYER_PINS_SELECTED]) {
     map.on("click", layerId, (e) => {
       const f = e.features?.[0];
       const meta = f ? buildingMetaFromFeature(f) : null;
@@ -605,6 +655,7 @@ export default function CampusMap({
   focusPoint         = null,
   viewResetNonce     = 0,
   onCampusHomeClick,
+  showAllCampusBuildings = false,
 }: CampusMapProps) {
   const containerRef      = useRef<HTMLDivElement>(null);
   const mapRef            = useRef<maplibregl.Map | null>(null);
@@ -663,14 +714,20 @@ export default function CampusMap({
 
     const setupLayers = async () => {
       if (cancelled || !isMapReady(map)) return;
-      const [{ geojson, centroids }, [pinImg, pinSelectedImg]] = await Promise.all([
+      const [{ geojson, centroids }, [pinImg, pinSecondaryImg, pinSelectedImg]] = await Promise.all([
         loadCampusGeojson(),
-        Promise.all([makePinImage(PIN_GOLD), makePinImage(PIN_GOLD_SELECTED, 1.35)]),
+        Promise.all([
+          makePinImage(PIN_GOLD),
+          makePinImage(PIN_SECONDARY, 0.9),
+          makePinImage(PIN_GOLD_SELECTED, 1.35),
+        ]),
       ]);
       if (cancelled || !isMapReady(map)) return;
 
       if (!map.hasImage(PIN_IMAGE))
         map.addImage(PIN_IMAGE, pinImg, { pixelRatio: 2 });
+      if (!map.hasImage(PIN_IMAGE_SECONDARY))
+        map.addImage(PIN_IMAGE_SECONDARY, pinSecondaryImg, { pixelRatio: 2 });
       if (!map.hasImage(PIN_IMAGE_SELECTED))
         map.addImage(PIN_IMAGE_SELECTED, pinSelectedImg, { pixelRatio: 2 });
 
@@ -680,6 +737,7 @@ export default function CampusMap({
       addBuildingSource(map, geojson);
       addRouteLayers(map);
       addPinLayers(map, geojson);
+      syncSecondaryPinZoom(map, false);
       attachPinInteractions(
         map,
         (id, meta) => onSelectRef.current(id, meta),
@@ -737,6 +795,12 @@ export default function CampusMap({
     observer.observe(el);
     return () => observer.disconnect();
   }, [resizeMap]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !layersReadyRef.current) return;
+    syncSecondaryPinZoom(map, showAllCampusBuildings);
+  }, [showAllCampusBuildings]);
 
   // ── Unified camera sync (single owner — avoids competing flyTo/fitBounds) ───
   useEffect(() => {
