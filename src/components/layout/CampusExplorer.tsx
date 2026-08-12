@@ -65,6 +65,7 @@ export default function CampusExplorer() {
   }, []);
 
   useEffect(() => {
+    if (window.location.pathname !== "/") return;
     const params = new URLSearchParams(window.location.search);
     const id = params.get("building");
     if (id) {
@@ -74,6 +75,7 @@ export default function CampusExplorer() {
   }, []);
 
   useEffect(() => {
+    if (window.location.pathname !== "/") return;
     const url = new URL(window.location.href);
     if (selectedId) url.searchParams.set("building", selectedId);
     else url.searchParams.delete("building");

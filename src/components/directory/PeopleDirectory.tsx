@@ -6,7 +6,7 @@ import ProfileCard from "@/components/directory/ProfileCard";
 import ProfileModal from "@/components/directory/ProfileModal";
 import type { DirectoryResearcher } from "@/lib/research-seed";
 
-export default function PeopleDirectory() {
+export default function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
   const [researchers, setResearchers] = useState<DirectoryResearcher[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +64,7 @@ export default function PeopleDirectory() {
   const openResearcher = researchers.find((r) => r.id === openId) ?? null;
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-gray-50">
+    <div className={`${embedded ? "h-full" : "h-screen"} w-full flex flex-col overflow-hidden bg-gray-50`}>
       <AppHeader active="directory" />
 
       <main className="flex-1 overflow-y-auto">
