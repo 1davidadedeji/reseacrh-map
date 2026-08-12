@@ -6,13 +6,32 @@ import maplibregl, {
   type PaddingOptions,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import {
-  bbox, bboxPolygon, booleanClockwise, booleanIntersects, buffer,
-  concave, convex, distance, explode, featureCollection, point, polygonSmooth, union,
-} from "@turf/turf";
+import { bbox, featureCollection } from "@turf/turf";
 import type { Building } from "@/types";
 import type { GeoJsonBuildingMeta } from "@/types/building-selection";
 import type { DirectionsResult } from "@/lib/directions";
+import {
+  BUILDING_FOCUS_ZOOM,
+  CAMPUS_MAX_ZOOM,
+  CAMPUS_MIN_ZOOM,
+  INITIAL_CENTER,
+  INITIAL_ZOOM,
+  LABEL_MIN_ZOOM,
+  LEFT_COLLAPSED_W,
+  LEFT_PANEL_W,
+  MAP_MAX_BOUNDS,
+  MASK_OPACITY,
+  PIN_GOLD,
+  PIN_GOLD_SELECTED,
+  RIGHT_SIDEBAR_W,
+} from "@/lib/map-config";
+import {
+  WORLD_RING,
+  centroidFromFeature,
+  getMainCampusFitBounds,
+  getMaskZones,
+  type Zone,
+} from "@/lib/campus-mask";
 
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY ?? "";
 
@@ -45,57 +64,6 @@ const ROUTE_BLUE_CASING = "#ffffff";
 
 const PIN_IMAGE          = "uapb-pin";
 const PIN_IMAGE_SELECTED = "uapb-pin-selected";
-
-// Satellite + mask sit ABOVE the basemap's road layers (so no road lines
-// render over the campus imagery) and below its symbol/label layers. Outside
-// the zones the opaque mask therefore covers roads too: at 0.92 they faintly
-// ghost through the mask; flip to 1.0 for the clean-paper look (no roads
-// outside campus at all).
-const MASK_OPACITY = 0.92;
-
-const INITIAL_CENTER: [number, number] = [-92.02184, 34.24382];
-const INITIAL_ZOOM        = 16;
-const BUILDING_FOCUS_ZOOM = 18;
-const LABEL_MIN_ZOOM      = 15.5;
-
-// Fallback framing used until the campus zone is computed from building
-// footprints on first load (getMaskZones updates campusFitBounds).
-const CAMPUS_BOUNDS_FALLBACK: [[number, number], [number, number]] = [
-  [-92.0250, 34.2400],
-  [-92.0170, 34.2530],
-];
-const MAIN_CAMPUS_CENTER: [number, number] = [-92.02184, 34.24382];
-const MAIN_CAMPUS_RADIUS_KM = 1.2;
-const CAMPUS_MIN_ZOOM = 15.8;
-const CAMPUS_MAX_ZOOM = 18;
-
-let campusFitBounds = CAMPUS_BOUNDS_FALLBACK;
-let mainCampusFitBounds = CAMPUS_BOUNDS_FALLBACK;
-
-const WORLD_RING: [number, number][] = [
-  [-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85],
-];
-
-// Off-campus research sites revealed through the satellite mask. Each point
-// is buffered by `radius` meters into a rounded satellite island — add future
-// sites here. Zones that end up overlapping (each other or the campus hull)
-// are automatically unioned into a single island by dissolveOverlaps().
-const OFF_CAMPUS_SITES = [
-  { id: "econ-dev-center",    name: "Economic Development Center",
-    lng: -92.0031, lat: 34.2233, radius: 120 },
-  { id: "ag-tech-center",     name: "Agricultural Technology & Training Center",
-    lng: -92.0273, lat: 34.2527, radius: 150 },
-  { id: "parker-ag-research", name: "S.J. Parker Agricultural Research Centre",
-    lng: -92.0242, lat: 34.2525, radius: 150 },
-];
-
-const LEFT_PANEL_W    = 400;
-const LEFT_COLLAPSED_W = 48;
-const RIGHT_SIDEBAR_W = 320;
-const MAP_UI_BOTTOM   = 100;
-
-const PIN_GOLD          = "#EEB310";
-const PIN_GOLD_SELECTED = "#1E40AF"; // navy blue — contrasts with gold default pins
 
 // ── Pin SVG geometry (28 × 34) ─────────────────────────────────────────────────
 // Circle head: r=11 centered at (14,13).  Tip at (14,33) → anchor: "bottom" puts
@@ -165,12 +133,12 @@ function buildMapPadding(lc: boolean, rs: boolean): PaddingOptions {
 
 function fitCampusView(map: maplibregl.Map, padding: PaddingOptions, animate = true) {
   try {
-    map.fitBounds(mainCampusFitBounds, {
+    map.fitBounds(getMainCampusFitBounds(), {
       padding,
       pitch:   0,
       bearing: 0,
       duration: animate ? 600 : 0,
-      maxZoom:  CAMPUS_MAX_ZOOM,
+      maxZoom:  BUILDING_FOCUS_ZOOM,
     });
     const enforceMinZoom = () => {
       if (!isMapReady(map)) return;
@@ -207,24 +175,6 @@ function buildingMetaFromFeature(f: GeoJSON.Feature): GeoJsonBuildingMeta | null
   return { id, name, code: String(p.code ?? "") };
 }
 
-function ringCentroid(ring: number[][]): [number, number] | null {
-  let n = ring.length;
-  if (n === 0) return null;
-  const [f, l] = [ring[0], ring[n - 1]];
-  if (n > 1 && f[0] === l[0] && f[1] === l[1]) n -= 1;
-  if (n === 0) return null;
-  let lng = 0, lat = 0;
-  for (let i = 0; i < n; i++) { lng += ring[i][0]; lat += ring[i][1]; }
-  return [lng / n, lat / n];
-}
-
-function centroidFromFeature(f: GeoJSON.Feature): [number, number] | null {
-  const g = f.geometry;
-  if (g.type === "Polygon")      return ringCentroid(g.coordinates[0]);
-  if (g.type === "MultiPolygon") return ringCentroid(g.coordinates[0][0]);
-  return null;
-}
-
 // ── Map layer builders ─────────────────────────────────────────────────────────
 
 function satelliteTileURL(): string | null {
@@ -256,118 +206,6 @@ function basemapBackgroundColor(map: maplibregl.Map): string {
   return "#f8f8f6";
 }
 
-// ── Satellite mask zones (computed once from building footprints) ──────────────
-
-type Zone = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
-
-// Concave hull of every building vertex, buffered 40 m and smoothed.
-// maxEdge starts tight (0.2 km hugs building clusters instead of bridging
-// across the forest east of campus) and steps up 0.05 until concave() yields
-// a single clean polygon instead of null / MultiPolygon fragments — 0.25 km
-// with the current data.
-function computeCampusZone(geojson: GeoJSON.FeatureCollection): Zone {
-  const points = explode(geojson);
-  let hull: Zone | null = null;
-  for (let step = 0; step <= 5; step++) {
-    const h = concave(points, { maxEdge: 0.2 + step * 0.05, units: "kilometers" });
-    if (h && h.geometry.type === "Polygon") { hull = h; break; }
-  }
-  hull ??= convex(points);
-  const base: Zone = hull ?? bboxPolygon(bbox(geojson));
-  const buffered = buffer(base, 40, { units: "meters" }) ?? base;
-  return polygonSmooth(buffered, { iterations: 2 }).features[0] ?? buffered;
-}
-
-function computeOffCampusZones(): Zone[] {
-  const byId = new Map<string, Zone>();
-  for (const s of OFF_CAMPUS_SITES) {
-    const zone = buffer(point([s.lng, s.lat], { site_id: s.id, name: s.name }),
-      s.radius, { units: "meters" });
-    if (zone) byId.set(s.id, zone);
-  }
-  // The two Oliver Rd sites are ~300 m apart — merge them into one zone
-  const agTech = byId.get("ag-tech-center");
-  const parker = byId.get("parker-ag-research");
-  if (agTech && parker) {
-    const merged = union(featureCollection([agTech, parker]));
-    if (merged) {
-      byId.delete("parker-ag-research");
-      byId.set("ag-tech-center", merged);
-    }
-  }
-  return [...byId.values()];
-}
-
-// Overlapping hole rings make the mask polygon invalid (even-odd fill re-fills
-// the overlap), so any zones that touch are unioned into one island first.
-function dissolveOverlaps(zones: Zone[]): Zone[] {
-  const out: Zone[] = [];
-  for (let zone of zones) {
-    for (let i = out.length - 1; i >= 0; i--) {
-      if (booleanIntersects(out[i], zone)) {
-        zone = union(featureCollection([out[i], zone])) ?? zone;
-        out.splice(i, 1);
-      }
-    }
-    out.push(zone);
-  }
-  return out;
-}
-
-// Outer ring of every zone polygon, wound clockwise — opposite the CCW world
-// ring — so each punches a hole through the mask.
-function zoneHoleRings(zones: Zone[]): GeoJSON.Position[][] {
-  const rings: GeoJSON.Position[][] = [];
-  for (const zone of zones) {
-    const polys = zone.geometry.type === "Polygon"
-      ? [zone.geometry.coordinates]
-      : zone.geometry.coordinates;
-    for (const poly of polys) {
-      const outer = poly[0];
-      rings.push(booleanClockwise(outer) ? outer : [...outer].reverse());
-    }
-  }
-  return rings;
-}
-
-interface MaskZones {
-  zones:     Zone[];
-  holeRings: GeoJSON.Position[][];
-}
-
-function filterMainCampusFeatures(geojson: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
-  const center = point(MAIN_CAMPUS_CENTER);
-  return {
-    type: "FeatureCollection",
-    features: geojson.features.filter((f) => {
-      const c = centroidFromFeature(f);
-      if (!c) return false;
-      return distance(center, point(c), { units: "kilometers" }) <= MAIN_CAMPUS_RADIUS_KM;
-    }),
-  };
-}
-
-function updateMainCampusFitBounds(geojson: GeoJSON.FeatureCollection) {
-  const main = filterMainCampusFeatures(geojson);
-  if (main.features.length === 0) return;
-  const zone = computeCampusZone(main);
-  const [w, s, e, n] = bbox(zone);
-  mainCampusFitBounds = [[w, s], [e, n]];
-}
-
-let cachedMaskZones: MaskZones | null = null;
-
-function getMaskZones(geojson: GeoJSON.FeatureCollection): MaskZones {
-  if (cachedMaskZones) return cachedMaskZones;
-  const campusZone = computeCampusZone(geojson);
-  const [w, s, e, n] = bbox(campusZone);
-  campusFitBounds = [[w, s], [e, n]];
-  updateMainCampusFitBounds(geojson);
-  const zones = dissolveOverlaps([campusZone, ...computeOffCampusZones()]);
-  cachedMaskZones = { zones, holeRings: zoneHoleRings(zones) };
-  return cachedMaskZones;
-}
-
 // ── Satellite + mask layers ────────────────────────────────────────────────────
 
 function addSatelliteWithMask(map: maplibregl.Map, holeRings: GeoJSON.Position[][]) {
@@ -382,8 +220,7 @@ function addSatelliteWithMask(map: maplibregl.Map, holeRings: GeoJSON.Position[]
 
   // Mask: world polygon with zone-shaped holes, painted in the basemap
   // background color directly above the satellite layer. Outside the holes
-  // it hides the satellite AND the road layers below it (see MASK_OPACITY);
-  // inside the zones the satellite shows through with no roads drawn on top.
+  // the opaque mask hides satellite and roads; inside, satellite shows through.
   map.addSource(MASK_SOURCE, {
     type: "geojson",
     data: {
@@ -816,6 +653,9 @@ export default function CampusMap({
       zoom:    INITIAL_ZOOM,
       pitch:   0,
       bearing: 0,
+      minZoom: CAMPUS_MIN_ZOOM,
+      maxZoom: CAMPUS_MAX_ZOOM,
+      maxBounds: MAP_MAX_BOUNDS,
     });
 
     mapRef.current       = map;
