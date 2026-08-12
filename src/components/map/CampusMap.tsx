@@ -20,7 +20,6 @@ import {
   LEFT_COLLAPSED_W,
   LEFT_PANEL_W,
   MAP_MAX_BOUNDS,
-  MASK_OPACITY,
   PIN_GOLD,
   PIN_GOLD_SELECTED,
   PIN_SECONDARY,
@@ -31,7 +30,6 @@ import {
   prefersReducedMotion,
 } from "@/lib/map-config";
 import {
-  WORLD_RING,
   centroidFromFeature,
   getMainCampusFitBounds,
   getMaskZones,
@@ -43,6 +41,11 @@ import {
   resolveCategory,
   resolvePinTier,
 } from "@/lib/building-catalog";
+import {
+  buildSatelliteStyle,
+  clipPathFromZones,
+  syncOverlayCamera,
+} from "@/lib/satellite-overlay";
 
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY ?? "";
 
@@ -51,15 +54,11 @@ const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY ?? "";
 const MAP_STYLE = `https://api.maptiler.com/maps/dataviz-light/style.json?key=${MAPTILER_KEY}`;
 
 const SOURCE_ID        = "campus-buildings";
-const SATELLITE_SOURCE = "satellite";
-const MASK_SOURCE      = "satellite-mask";
 const ZONES_SOURCE     = "satellite-zones";
 const PINS_SOURCE      = "building-pins";
 const ROUTE_SOURCE        = "route-line";
 const ROUTE_ENDPOINTS_SOURCE = "route-endpoints";
 
-const LAYER_SATELLITE     = "satellite-layer";
-const LAYER_MASK          = "satellite-mask-layer";
 const LAYER_ZONE_OUTLINE  = "satellite-zones-outline";
 const LAYER_LABELS        = "buildings-labels";
 const LAYER_PINS          = "pins-layer";
@@ -219,96 +218,104 @@ function satelliteTileURL(): string | null {
   return `https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key=${MAPTILER_KEY}`;
 }
 
-// Insertion point: above land fills, below basemap line/road layers so the
-// paper mask still hides satellite outside campus while roads/paths draw on
-// top of that paper for neighborhood context. Campus holes stay clean via
-// line-opacity + `within` (see suppressBasemapLinesInsideCampus).
-function findSatelliteInsertPoint(map: maplibregl.Map): string | undefined {
-  const layers = map.getStyle()?.layers ?? [];
-  return layers.find((l) => l.type === "line" || l.type === "symbol")?.id;
-}
-
-function basemapBackgroundColor(map: maplibregl.Map): string {
-  const bg = (map.getStyle()?.layers ?? []).find((l) => l.type === "background");
-  if (bg) {
-    const c = map.getPaintProperty(bg.id, "background-color");
-    if (typeof c === "string") return c;
-    // Zoom-interpolated background color expression: take the
-    // highest-zoom color stop
-    if (Array.isArray(c)) {
-      const colors = (c as unknown[]).filter(
-        (v): v is string => typeof v === "string" && /^(#|rgb|hsl)/.test(v)
-      );
-      if (colors.length) return colors[colors.length - 1];
-    }
-  }
-  return "#f8f8f6";
-}
-
-/** Hide basemap line work that lies fully inside campus satellite holes. */
-function suppressBasemapLinesInsideCampus(map: maplibregl.Map, zones: Zone[]) {
-  if (zones.length === 0) return;
-  const campus = featureCollection(zones);
-  for (const layer of map.getStyle()?.layers ?? []) {
-    if (layer.type !== "line") continue;
-    if (
-      layer.id === LAYER_ZONE_OUTLINE ||
-      layer.id.startsWith("route-") ||
-      layer.id === LAYER_MASK
-    ) {
-      continue;
-    }
-    try {
-      const prev = map.getPaintProperty(layer.id, "line-opacity");
-      const base = prev === undefined ? 1 : prev;
-      map.setPaintProperty(layer.id, "line-opacity", [
-        "case",
-        ["within", campus],
-        0,
-        base,
-      ] as ExpressionSpecification);
-    } catch {
-      /* some style layers reject paint overrides */
-    }
-  }
-}
-
-// ── Satellite + mask layers ────────────────────────────────────────────────────
-
-function addSatelliteWithMask(map: maplibregl.Map, holeRings: GeoJSON.Position[][]) {
-  if (map.getSource(SATELLITE_SOURCE)) return;
-  const tileURL = satelliteTileURL();
-  if (!tileURL) return;
-
-  const beforeId = findSatelliteInsertPoint(map);
-
-  map.addSource(SATELLITE_SOURCE, { type: "raster", tiles: [tileURL], tileSize: 512, maxzoom: 20 });
-  map.addLayer({ id: LAYER_SATELLITE, type: "raster", source: SATELLITE_SOURCE }, beforeId);
-
-  // Mask: world polygon with zone-shaped holes, painted in the basemap
-  // background color. Outside holes the mask covers satellite; road layers
-  // sit above this stack so the surrounding basemap still shows streets.
-  // Inside holes, satellite shows and roads are suppressed (see below).
-  map.addSource(MASK_SOURCE, {
-    type: "geojson",
-    data: {
-      type: "Feature",
-      geometry: { type: "Polygon", coordinates: [WORLD_RING, ...holeRings] },
-      properties: {},
-    },
-  });
-  map.addLayer({
-    id: LAYER_MASK, type: "fill", source: MASK_SOURCE,
-    paint: { "fill-color": basemapBackgroundColor(map), "fill-opacity": MASK_OPACITY },
-  }, beforeId);
-}
-
 // Gold sketched outline around every satellite island
 function addZoneOutlines(map: maplibregl.Map, zones: Zone[]) {
   if (map.getSource(ZONES_SOURCE)) return;
   map.addSource(ZONES_SOURCE, { type: "geojson", data: featureCollection(zones) });
   map.addLayer({ id: LAYER_ZONE_OUTLINE, type: "line", source: ZONES_SOURCE,
     paint: { "line-color": "#C8960A", "line-width": 2, "line-opacity": 0.5 } });
+}
+
+/**
+ * Campus aerial as a clipped overlay map above the basemap canvas.
+ * Outside the clip the full 2D basemap (roads, landuse) stays visible;
+ * inside, satellite covers those roads so they never slash the aerial.
+ * Symbol pins/labels/routes are mirrored onto the overlay so they stay
+ * readable on campus; hit-testing stays on the base map (overlay is
+ * pointer-events: none). Popups/HTML markers sit above the canvas host.
+ */
+function mountSatelliteOverlay(
+  base: maplibregl.Map,
+  zones: Zone[],
+): { sat: maplibregl.Map; destroy: () => void } | null {
+  const tileURL = satelliteTileURL();
+  if (!tileURL || !MAPTILER_KEY) return null;
+
+  const canvasHost = base.getCanvasContainer();
+  const host = document.createElement("div");
+  host.className = "campus-sat-overlay";
+  host.style.cssText =
+    "position:absolute;inset:0;pointer-events:none;z-index:1;overflow:hidden;";
+  canvasHost.appendChild(host);
+
+  const sat = new maplibregl.Map({
+    container: host,
+    style: buildSatelliteStyle(tileURL, MAPTILER_KEY),
+    center: base.getCenter(),
+    zoom: base.getZoom(),
+    bearing: base.getBearing(),
+    pitch: base.getPitch(),
+    interactive: false,
+    attributionControl: false,
+    minZoom: CAMPUS_MIN_ZOOM,
+    maxZoom: CAMPUS_MAX_ZOOM,
+    maxBounds: MAP_MAX_BOUNDS,
+  });
+
+  const sync = () => {
+    if (!isMapReady(base) || !isMapReady(sat)) return;
+    syncOverlayCamera(base, sat);
+    const path = clipPathFromZones(base, zones);
+    host.style.clipPath = path;
+    host.style.setProperty("-webkit-clip-path", path);
+  };
+
+  const onBaseMove = () => sync();
+  const onBaseResize = () => {
+    try { sat.resize(); } catch { /* teardown */ }
+    sync();
+  };
+
+  base.on("move", onBaseMove);
+  base.on("resize", onBaseResize);
+
+  sat.once("load", () => {
+    sat.resize();
+    sync();
+  });
+
+  return {
+    sat,
+    destroy: () => {
+      base.off("move", onBaseMove);
+      base.off("resize", onBaseResize);
+      try { sat.remove(); } catch { /* already removed */ }
+      host.remove();
+    },
+  };
+}
+
+function mirrorOverlayDecorations(
+  sat: maplibregl.Map,
+  geojson: GeoJSON.FeatureCollection,
+  zones: Zone[],
+  pinImages: {
+    primary: HTMLImageElement;
+    secondary: HTMLImageElement;
+    selected: HTMLImageElement;
+  },
+) {
+  if (!sat.hasImage(PIN_IMAGE))
+    sat.addImage(PIN_IMAGE, pinImages.primary, { pixelRatio: 2 });
+  if (!sat.hasImage(PIN_IMAGE_SECONDARY))
+    sat.addImage(PIN_IMAGE_SECONDARY, pinImages.secondary, { pixelRatio: 2 });
+  if (!sat.hasImage(PIN_IMAGE_SELECTED))
+    sat.addImage(PIN_IMAGE_SELECTED, pinImages.selected, { pixelRatio: 2 });
+
+  addZoneOutlines(sat, zones);
+  addBuildingSource(sat, geojson);
+  addRouteLayers(sat);
+  addPinLayers(sat, geojson);
 }
 
 function addBuildingSource(map: maplibregl.Map, geojson: GeoJSON.FeatureCollection) {
@@ -715,6 +722,8 @@ export default function CampusMap({
 }: CampusMapProps) {
   const containerRef      = useRef<HTMLDivElement>(null);
   const mapRef            = useRef<maplibregl.Map | null>(null);
+  const satMapRef         = useRef<maplibregl.Map | null>(null);
+  const satDestroyRef     = useRef<(() => void) | null>(null);
   const layersReadyRef    = useRef(false);
   const prevSelectedIdRef = useRef<string | null>(null);
   const centroidsRef      = useRef<Map<string, [number, number]>>(new Map());
@@ -743,7 +752,10 @@ export default function CampusMap({
   const resizeMap = useCallback(() => {
     const map = mapRef.current;
     if (!isMapReady(map)) return;
-    try { map.resize(); } catch { /* mid-teardown */ }
+    try {
+      map.resize();
+      satMapRef.current?.resize();
+    } catch { /* mid-teardown */ }
   }, []);
 
   // ── Initialize map once ────────────────────────────────────────────────────
@@ -787,9 +799,29 @@ export default function CampusMap({
       if (!map.hasImage(PIN_IMAGE_SELECTED))
         map.addImage(PIN_IMAGE_SELECTED, pinSelectedImg, { pixelRatio: 2 });
 
-      const { zones, holeRings } = getMaskZones(geojson);
-      addSatelliteWithMask(map, holeRings);
-      suppressBasemapLinesInsideCampus(map, zones);
+      const { zones } = getMaskZones(geojson);
+
+      // Full 2D basemap stays intact (roads, landuse). Campus aerial is a
+      // CSS-clipped overlay map so it never flattens surroundings to paper.
+      const overlay = mountSatelliteOverlay(map, zones);
+      if (overlay) {
+        satMapRef.current = overlay.sat;
+        satDestroyRef.current = overlay.destroy;
+        const wireSat = () => {
+          if (cancelled || !isMapReady(overlay.sat)) return;
+          mirrorOverlayDecorations(overlay.sat, geojson, zones, {
+            primary: pinImg,
+            secondary: pinSecondaryImg,
+            selected: pinSelectedImg,
+          });
+          syncSecondaryPinZoom(overlay.sat, false);
+          syncPinSelection(overlay.sat, prevSelectedIdRef.current);
+          syncRoute(overlay.sat, routeRef.current);
+        };
+        if (overlay.sat.isStyleLoaded()) wireSat();
+        else overlay.sat.once("load", wireSat);
+      }
+
       addZoneOutlines(map, zones);
       addBuildingSource(map, geojson);
       addRouteLayers(map);
@@ -839,6 +871,9 @@ export default function CampusMap({
       cancelled = true;
       layersReadyRef.current = false;
       map.off("error", onMapError);
+      satDestroyRef.current?.();
+      satDestroyRef.current = null;
+      satMapRef.current = null;
       map.remove(); // also detaches pin layer handlers and the hover popup
       mapRef.current = null;
     };
@@ -857,6 +892,8 @@ export default function CampusMap({
     const map = mapRef.current;
     if (!map || !layersReadyRef.current) return;
     syncSecondaryPinZoom(map, showAllCampusBuildings);
+    const sat = satMapRef.current;
+    if (sat && isMapReady(sat)) syncSecondaryPinZoom(sat, showAllCampusBuildings);
   }, [showAllCampusBuildings]);
 
   // ── Unified camera sync (single owner — avoids competing flyTo/fitBounds) ───
@@ -868,6 +905,8 @@ export default function CampusMap({
     }
 
     syncPinSelection(map, selectedId);
+    const sat = satMapRef.current;
+    if (sat && isMapReady(sat)) syncPinSelection(sat, selectedId);
     prevSelectedIdRef.current = selectedId;
 
     const token = ++cameraTokenRef.current;
@@ -940,6 +979,8 @@ export default function CampusMap({
     const map = mapRef.current;
     if (!map || !layersReadyRef.current) return;
     syncRoute(map, route);
+    const sat = satMapRef.current;
+    if (sat && isMapReady(sat)) syncRoute(sat, route);
   }, [route]);
 
   // ── User location marker sync ───────────────────────────────────────────────
