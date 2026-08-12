@@ -5,6 +5,22 @@ import AppHeader from "@/components/layout/AppHeader";
 import ProfileCard from "@/components/directory/ProfileCard";
 import ProfileModal from "@/components/directory/ProfileModal";
 import type { DirectoryResearcher } from "@/lib/research-seed";
+import {
+  DIRECTORY_EMPTY,
+  DIRECTORY_RESULT_COUNT,
+  DIRECTORY_SEARCH_PLACEHOLDER,
+  DIRECTORY_SUBTITLE,
+  DIRECTORY_TITLE,
+} from "@/lib/ui-copy";
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0].toUpperCase())
+    .join("");
+}
 
 export default function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
   const [researchers, setResearchers] = useState<DirectoryResearcher[]>([]);
@@ -13,6 +29,7 @@ export default function PeopleDirectory({ embedded = false }: { embedded?: boole
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [view, setView] = useState<"grid" | "list">("grid");
 
   useEffect(() => {
     const person = new URLSearchParams(window.location.search).get("person");
@@ -43,8 +60,11 @@ export default function PeopleDirectory({ embedded = false }: { embedded?: boole
   }, []);
 
   const departments = useMemo(
-    () => Array.from(new Set(researchers.map((r) => r.department).filter((d): d is string => Boolean(d)))).sort(),
-    [researchers]
+    () =>
+      Array.from(
+        new Set(researchers.map((r) => r.department).filter((d): d is string => Boolean(d))),
+      ).sort(),
+    [researchers],
   );
 
   const filtered = useMemo(() => {
@@ -62,33 +82,41 @@ export default function PeopleDirectory({ embedded = false }: { embedded?: boole
   }, [researchers, query, department]);
 
   const openResearcher = researchers.find((r) => r.id === openId) ?? null;
+  const hasFilters = Boolean(query || department);
 
   return (
-    <div className={`${embedded ? "h-full" : "h-screen"} w-full flex flex-col overflow-hidden bg-gray-50`}>
+    <div
+      className={`${embedded ? "h-full" : "h-screen"} w-full flex flex-col overflow-hidden bg-gray-50`}
+    >
       <AppHeader active="directory" />
 
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 py-8">
+        <div className="max-w-6xl mx-auto px-6 py-8">
           <div className="mb-6">
-            <h1 className="text-xl font-black text-gray-900">People Directory</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Faculty and researchers across UAPB campus buildings — reach out directly or explore their work.
-            </p>
+            <h1 className="text-xl font-black text-gray-900">{DIRECTORY_TITLE}</h1>
+            <p className="text-sm text-gray-500 mt-1">{DIRECTORY_SUBTITLE}</p>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2.5 mb-6">
+          <div className="flex flex-col lg:flex-row gap-2.5 mb-3">
             <div className="relative flex-1">
               <svg
                 className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400"
-                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
               </svg>
               <input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search by name, title, or specialization…"
+                placeholder={DIRECTORY_SEARCH_PLACEHOLDER}
                 className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-[13px] text-gray-800 placeholder-gray-400 outline-none focus:border-[#EEB310] transition-all"
               />
             </div>
@@ -100,11 +128,37 @@ export default function PeopleDirectory({ embedded = false }: { embedded?: boole
               >
                 <option value="">All departments</option>
                 {departments.map((d) => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
                 ))}
               </select>
             )}
+            <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => setView("grid")}
+                className={`px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors ${
+                  view === "grid" ? "bg-amber-50 text-amber-700" : "text-gray-500 hover:text-gray-800"
+                }`}
+              >
+                Grid
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                className={`px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors ${
+                  view === "list" ? "bg-amber-50 text-amber-700" : "text-gray-500 hover:text-gray-800"
+                }`}
+              >
+                List
+              </button>
+            </div>
           </div>
+
+          {!loading && !error && (
+            <p className="text-[12px] text-gray-400 mb-4">{DIRECTORY_RESULT_COUNT(filtered.length)}</p>
+          )}
 
           {loading && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -117,15 +171,60 @@ export default function PeopleDirectory({ embedded = false }: { embedded?: boole
           {error && <p className="text-sm text-red-500">{error}</p>}
 
           {!loading && !error && filtered.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
-              <p className="text-sm text-gray-400">No matching researchers found.</p>
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+              <p className="text-sm text-gray-400">{DIRECTORY_EMPTY}</p>
+              {hasFilters && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setDepartment("");
+                  }}
+                  className="text-[12px] font-semibold text-[#EEB310] hover:text-amber-600"
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
           )}
 
-          {!loading && !error && filtered.length > 0 && (
+          {!loading && !error && filtered.length > 0 && view === "grid" && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {filtered.map((r) => (
                 <ProfileCard key={r.id} researcher={r} onOpen={() => setOpenId(r.id)} />
+              ))}
+            </div>
+          )}
+
+          {!loading && !error && filtered.length > 0 && view === "list" && (
+            <div className="rounded-xl border border-gray-200 bg-white overflow-hidden divide-y divide-gray-100">
+              {filtered.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => setOpenId(r.id)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-amber-50/60 transition-colors"
+                >
+                  <div className="h-10 w-10 shrink-0 rounded-lg bg-[#EEB310]/15 flex items-center justify-center text-amber-700 font-bold text-xs overflow-hidden">
+                    {r.photo_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={r.photo_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      initials(r.name)
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-semibold text-gray-900 truncate">{r.name}</p>
+                    <p className="text-[11px] text-gray-500 truncate">
+                      {[r.title, r.department].filter(Boolean).join(" · ")}
+                    </p>
+                  </div>
+                  {r.email && (
+                    <span className="hidden sm:inline text-[11px] text-gray-400 truncate max-w-[200px]">
+                      {r.email}
+                    </span>
+                  )}
+                </button>
               ))}
             </div>
           )}

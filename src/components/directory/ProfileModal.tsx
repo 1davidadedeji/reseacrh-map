@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import type { DirectoryResearcher } from "@/lib/research-seed";
+import { PROFILE_VIEW_ON_MAP } from "@/lib/ui-copy";
 
 function initials(name: string) {
   return name
@@ -115,7 +116,7 @@ export default function ProfileModal({ researcher: r, onClose }: ProfileModalPro
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
-                {r.building_name}
+                {PROFILE_VIEW_ON_MAP}
               </Link>
             )}
           </div>

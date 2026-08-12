@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { MouseEvent, ReactNode } from "react";
+import { NAV_FACULTY, NAV_MAP } from "@/lib/ui-copy";
 
 interface AppHeaderProps {
   active: "map" | "directory";
@@ -55,7 +56,7 @@ export default function AppHeader({ active, rightSlot, onHomeClick }: AppHeaderP
               : "text-gray-500 hover:text-gray-800 hover:bg-gray-50"
           }`}
         >
-          Campus Map
+          {NAV_MAP}
         </Link>
         <Link
           href="/directory"
@@ -65,7 +66,7 @@ export default function AppHeader({ active, rightSlot, onHomeClick }: AppHeaderP
               : "text-gray-500 hover:text-gray-800 hover:bg-gray-50"
           }`}
         >
-          People Directory
+          {NAV_FACULTY}
         </Link>
       </nav>
 
